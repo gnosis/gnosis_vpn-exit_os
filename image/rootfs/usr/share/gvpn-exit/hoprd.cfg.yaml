@@ -1,0 +1,99 @@
+---
+# hoprd v5 configuration shared by every appliance, with the session forwarding
+# allow-list pointing at the local gnosis_vpn-server. Safe and module addresses
+# are set per device via HOPRD_* env at provisioning.
+#
+# hoprd requires blokli_url in the file; HOPRD_BLOKLI_URL from provisioning
+# (/etc/hoprd-v5/hoprd.env.d/10-provisioned.env) overrides it per device.
+# The v5 service only starts once that file exists; hoprd-run.sh renders both
+# blokli_url entries into a per-start copy. This placeholder only satisfies
+# hoprd-cfg validation during build; hoprd-run.sh refuses to start without a
+# valid provisioned URL.
+blokli_url: https://blokli.example.org
+hopr:
+  # Safe default until gvpn-exit-hoprd-address discovers the public IPv4.
+  # Its persistent environment file sets HOPRD_HOST and HOPRD_ANNOUNCE=1
+  # together. Announcement does not establish NAT or firewall reachability.
+  announce: false
+  network:
+    pix:
+      num_ssa_parts: 4096
+      ssa_part_size: 32
+      additional_shares: 79
+      max_ssas_per_request: 3
+    incoming_session_pix:
+      enforce_pix: false
+      max_ssa_delivery_time: 20s
+      max_deposit_wait: 3m
+      max_recovery_time: 2h
+      ssas_per_request: 1
+session_ip_forwarding:
+  # The only destinations session traffic may leave hoprd for: hoprd can
+  # never be used to reach the LAN. These are the GnosisVPN client's built-in
+  # session targets (172.30.0.1 is the session target address built into the
+  # client); gvpn-exit-loopback-alias.service keeps that address on lo.
+  target_allow_list:
+    - "172.30.0.1:8000"    # gnosis_vpn-server API
+    - "172.30.0.1:51820"   # WireGuard (wggvpn)
+  # First match wins; only the WG data session pays, control/health stay free.
+  session_admission_rules:
+    - target: "udp:172.30.0.1:51820"
+      enforce_pix: true
+    - target: "*"
+      enforce_pix: false
+strategy:
+  allow_recursive: false
+  execution_interval: 15s
+  strategies:
+    - ChannelLifecycle:
+        population:
+          min_open_channels: 5
+          target_open_channels: 8
+        eligibility:
+          require_currently_connected: true
+          min_peer_quality_score: 0.5
+          peer_quality_weight: 0.6
+          ticket_activity_weight: 0.4
+          require_observed_since_start: true
+          allowlist: ~
+          blocklist: []
+        funding:
+          initial_capacity: "1 GiB"
+          topup_capacity: "1 GiB"
+          lower_capacity_threshold: "256 MiB"
+          sizing_mode: deterministic
+        proactive_funding:
+          enabled: true
+          safety_margin: 1.5
+          balance_drain_weight: 1.0
+          ticket_index_drain_weight: 1.0
+        closure:
+          close_below_quality_score: 0.3
+          close_when_drained_below: "0 wxHOPR"
+          close_max_concurrent: 2
+        finalizer:
+          enabled: true
+          finalize_max_concurrent: 4
+        restart: {}
+        concurrency:
+          max_concurrent_actions: 4
+        selector: default
+    - AutoRedeeming:
+        minimum_redeem_ticket_value: "1 wei wxHOPR"
+    - Pix:
+        strategy:
+          price_per_byte: "1 000 000 000 wei wxHOPR"
+          max_ssa_allocation: 3 wxHOPR
+          max_spend_per_window: 6 wxHOPR
+          spend_window: 1day
+          deposit_buffer_period: 500ms
+          withdrawal_buffer_period: 500ms
+        pool:
+          blokli_url: https://blokli.example.org
+          submission: relayer
+          relayer_url: https://api.curvy.box
+          token: 2
+          max_deposit_tracking_time: 3m 20s
+          # The pool's recovery state must survive restarts and lives in the
+          # writable v5 state directory, not in hoprd's read-only CWD.
+          state_path: /var/lib/hoprd-v5/curvy-pix.redb

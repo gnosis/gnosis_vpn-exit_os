@@ -1,0 +1,9 @@
+[Unit]
+Description=Apply a staged OS update now and reboot (operator request)
+ConditionPathExists=/var/lib/gvpn-exit/identity/provisioned
+ConditionPathExists=/run/ostree-booted
+
+[Service]
+Type=oneshot
+# Bypasses only the maintenance window; shares all preparation and safety checks.
+ExecStart=/usr/bin/flock /run/gvpn-exit/update.lock /usr/libexec/gvpn-exit/update-apply.sh --now

@@ -1,0 +1,7 @@
+[Unit]
+Description=Preventive daily restart of hoprd
+ConditionPathExists=/var/lib/gvpn-exit/identity/provisioned
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/systemctl try-restart hoprd.service

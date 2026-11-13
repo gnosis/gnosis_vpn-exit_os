@@ -1,0 +1,13 @@
+[Unit]
+Description=Refresh GnosisVPN IP blocklist on a schedule
+ConditionPathExists=/var/lib/gvpn-exit/identity/provisioned
+
+[Timer]
+OnCalendar=*-*-* 03:00:00
+OnCalendar=*-*-* 15:00:00
+RandomizedDelaySec=3600
+Persistent=true
+Unit=gvpn-blocklist-refresh.service
+
+[Install]
+WantedBy=timers.target

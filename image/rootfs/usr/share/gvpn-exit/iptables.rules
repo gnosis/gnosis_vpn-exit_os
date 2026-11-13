@@ -1,0 +1,56 @@
+# Static IPv4 ruleset, loaded by gvpn-exit-firewall.service before any
+# network comes up. Every service that listens or forwards Requires= it.
+# When wggvpn comes up, wg-hooks.sh inserts the blocklist drops and a second
+# GVPN_PRIVATE jump at the head of FORWARD, then appends MASQUERADE and the
+# uplink ACCEPT.
+*filter
+:INPUT DROP [0:0]
+:FORWARD DROP [0:0]
+:OUTPUT ACCEPT [0:0]
+:GVPN_PRIVATE - [0:0]
+# Private and special-purpose destinations VPN clients must never reach
+# (LAN, CGNAT space, link-local, loopback, "this network", multicast, reserved).
+-A GVPN_PRIVATE -d 10.0.0.0/8 -j DROP
+-A GVPN_PRIVATE -d 172.16.0.0/12 -j DROP
+-A GVPN_PRIVATE -d 192.168.0.0/16 -j DROP
+-A GVPN_PRIVATE -d 100.64.0.0/10 -j DROP
+-A GVPN_PRIVATE -d 169.254.0.0/16 -j DROP
+-A GVPN_PRIVATE -d 127.0.0.0/8 -j DROP
+-A GVPN_PRIVATE -d 0.0.0.0/8 -j DROP
+-A GVPN_PRIVATE -d 224.0.0.0/3 -j DROP
+# The exit's own public address would be masqueraded and hit the router or a
+# hairpinned LAN host from a LAN address.
+-A GVPN_PRIVATE -m set --match-set gvpn-self dst -j DROP
+# INPUT
+-A INPUT -i lo -j ACCEPT
+-A INPUT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
+# The GnosisVPN client verifies the tunnel by pinging the WireGuard server
+# address before it reports the connection established. wg-hooks.sh accepts
+# exactly that echo request, from WIREGUARD_CIDR to WIREGUARD_ADDRESS, when
+# wggvpn comes up; everything else from VPN clients stays dropped below.
+# VPN clients never talk to the host
+-A INPUT -i wggvpn -j DROP
+# No unsolicited inbound hoprd p2p, even with an advertised public address;
+# replies to outbound connections arrive through the conntrack rule above.
+# SSH for devops from the LAN only (the support tunnel arrives via lo)
+-A INPUT -i lan0 -s 10.0.0.0/8 -p tcp -m tcp --dport 22 -j ACCEPT
+-A INPUT -i lan0 -s 172.16.0.0/12 -p tcp -m tcp --dport 22 -j ACCEPT
+-A INPUT -i lan0 -s 192.168.0.0/16 -p tcp -m tcp --dport 22 -j ACCEPT
+# DHCP replies: broadcast offers are not matched by conntrack. Destination-port
+# scoped (68, the DHCP client), so it cannot be turned against a service on the
+# device; the source is any host on lan0, because the reply may come from a
+# relay rather than from the DHCP server itself.
+-A INPUT -i lan0 -p udp -m udp --sport 67 --dport 68 -j ACCEPT
+# The router's answer to netprobe's own UPnP-IGD discovery is not covered by
+# conntrack: the query goes to a multicast group, and the answer comes from the
+# router's own address to an ephemeral port, so it is not a reply conntrack can
+# reverse. netprobe.sh therefore opens the reply path for the default gateway
+# for the duration of a probe. Nothing is accepted here: a standing rule on the
+# source port alone would let any LAN host reach every UDP service on the
+# device, WireGuard on 51820 included. (NAT-PMP is a unicast exchange with the
+# gateway, so the conntrack rule above covers its answer.)
+-A INPUT -i lan0 -p icmp -m icmp --icmp-type 8 -j ACCEPT
+# FORWARD (static part): unconditional LAN/host isolation, then return traffic
+-A FORWARD -i wggvpn -j GVPN_PRIVATE
+-A FORWARD -o wggvpn -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
+COMMIT

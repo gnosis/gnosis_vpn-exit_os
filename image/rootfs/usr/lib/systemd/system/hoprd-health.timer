@@ -1,0 +1,11 @@
+[Unit]
+Description=Check hoprd health every minute
+ConditionPathExists=/var/lib/gvpn-exit/identity/provisioned
+
+[Timer]
+OnBootSec=30s
+OnUnitActiveSec=60s
+Unit=hoprd-health.service
+
+[Install]
+WantedBy=timers.target

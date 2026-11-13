@@ -1,0 +1,11 @@
+[Unit]
+Description=Make sure the hoprd DB belongs to the booted deployment
+Documentation=file:///usr/libexec/gvpn-exit/data-guard.sh
+ConditionPathExists=/var/lib/gvpn-exit/identity/provisioned
+Before=hoprd.service
+After=local-fs.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/libexec/gvpn-exit/data-guard.sh

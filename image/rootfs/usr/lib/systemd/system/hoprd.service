@@ -1,0 +1,62 @@
+# hoprd on the appliance. The unit is written for this image: it starts hoprd
+# through hoprd-run.sh with the sealed credentials and the layered
+# environment files below.
+[Unit]
+Description=hoprd node
+ConditionPathExists=/var/lib/gvpn-exit/identity/provisioned
+# A device updated from v4 has no v5 provisioning file until the migration
+# helper writes one. Keeping hoprd stopped until then means the v5 strategies
+# cannot open channels or deposit PIX from the old Safe before the funds move.
+ConditionPathExists=/etc/hoprd-v5/hoprd.env.d/10-provisioned.env
+# The session allow-list in hoprd.cfg.yaml names the loopback alias address, so
+# the alias has to exist before hoprd forwards anything there.
+Requires=gvpn-exit-firewall.service gvpn-exit-data-guard.service gvpn-exit-loopback-alias.service
+Wants=network-online.target gvpn-exit-hoprd-address.service
+After=network-online.target gvpn-exit-firewall.service gvpn-exit-data-guard.service gvpn-exit-loopback-alias.service gvpn-exit-hoprd-address.service
+StartLimitIntervalSec=0
+
+[Service]
+User=hoprd
+Group=hoprd
+# The appliance layers image defaults and provisioning values.
+#
+# hoprd only starts once the v5 provisioning file exists (condition above), so
+# the v4 file is not loaded here: a partial or missing v5 file must never let
+# v5 fall back to the old Safe and module. The v4 file is what the cleanup
+# helper reads.
+EnvironmentFile=/usr/share/gvpn-exit/hoprd.env
+EnvironmentFile=-/etc/hoprd-v5/hoprd.env.d/10-provisioned.env
+# Optional until public-IP discovery succeeds; preserved across boots/updates.
+EnvironmentFile=-/var/lib/gvpn-exit/state/hoprd-host.env
+LoadCredentialEncrypted=hopr.id:/var/lib/gvpn-exit/creds/hopr.id.cred
+LoadCredentialEncrypted=hoprd.password:/var/lib/gvpn-exit/creds/hoprd.password.cred
+LoadCredentialEncrypted=hoprd.api-token:/var/lib/gvpn-exit/creds/hoprd.api-token.cred
+ExecStart=/usr/libexec/gvpn-exit/hoprd-run.sh
+# systemd sends the graceful SIGINT itself. An ExecStop `kill` would run as
+# the hoprd user and fail when a restart meets a main process that is still
+# systemd's root-owned executor loading the credentials.
+KillSignal=SIGINT
+KillMode=process
+TimeoutStopSec=90
+# hoprd-run.sh copies the sealed identity here, under a name other than the v4
+# credential's, before starting hoprd.
+RuntimeDirectory=hoprd
+RuntimeDirectoryMode=0700
+StateDirectory=hoprd-v5
+StateDirectoryMode=0700
+StandardOutput=journal
+StandardError=journal
+Restart=always
+RestartSec=30
+LimitNOFILE=65536
+# Preserve the p2p node's normal networking and forwarding while limiting
+# filesystem writes to StateDirectory; the log goes to the journal, so
+# systemd does not need /var/log/hoprd writable.
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+NoNewPrivileges=yes
+SystemCallFilter=@system-service
+
+[Install]
+WantedBy=multi-user.target

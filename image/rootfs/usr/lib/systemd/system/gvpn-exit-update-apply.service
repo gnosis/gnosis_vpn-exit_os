@@ -1,0 +1,9 @@
+[Unit]
+Description=Reboot into a staged OS update inside the maintenance window
+ConditionPathExists=/var/lib/gvpn-exit/identity/provisioned
+ConditionPathExists=/run/ostree-booted
+
+[Service]
+Type=oneshot
+# Holds the staging lock from reading the staged digest to the reboot.
+ExecStart=/usr/bin/flock /run/gvpn-exit/update.lock /usr/libexec/gvpn-exit/update-apply.sh

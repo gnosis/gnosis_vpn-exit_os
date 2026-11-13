@@ -1,0 +1,42 @@
+[Unit]
+Description=Measure the uplink and derive the VPN capacity
+# The measured link sizes the peer pool and the shaping tree, so it has to be
+# known before the server renders its client range and wg-quick installs the
+# classes. The server only Wants= this unit: a failed or skipped probe falls
+# back to the supported-environment floor instead of keeping the VPN down.
+ConditionPathExists=/var/lib/gvpn-exit/identity/provisioned
+Wants=network-online.target
+After=network-online.target
+Before=gnosisvpn-server.service
+
+[Service]
+Type=oneshot
+# One measurement per boot; a server restart reuses the sample instead of
+# spending the bandwidth again.
+RemainAfterExit=yes
+# capacity.sh bounds itself: a 10 s preflight, then warm-up and window per
+# direction (22 s with the defaults). This is the backstop for a probe that
+# hangs anyway.
+TimeoutStartSec=120
+ExecStart=/usr/libexec/gvpn-exit/capacity.sh
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+# The upload payload is a sparse file in the private tmp.
+PrivateTmp=yes
+ReadWritePaths=/var/lib/gvpn-exit/state
+# The probe needs no privilege at all: it reads a route and the LAN port's
+# byte counters, runs curl and writes one file. Cloudflare's speed test sees
+# this device's public address, as its public-IP lookup already does; that is
+# the measurement's price.
+CapabilityBoundingSet=
+AmbientCapabilities=
+# AF_NETLINK is not optional: `ip addr` and `ip route` speak netlink, and
+# without it the probe would silently skip on every boot.
+RestrictAddressFamilies=AF_INET AF_INET6 AF_NETLINK AF_UNIX
+RestrictNamespaces=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes

@@ -1,0 +1,15 @@
+[connection]
+id=lan0
+type=ethernet
+interface-name=lan0
+autoconnect=true
+autoconnect-priority=100
+
+[ethernet]
+wake-on-lan=64
+
+[ipv4]
+method=auto
+
+[ipv6]
+method=disabled

@@ -1,0 +1,12 @@
+[Unit]
+Description=Initialize HOPRd's public address once
+ConditionPathExists=/var/lib/gvpn-exit/identity/provisioned
+Wants=network-online.target
+After=network-online.target
+Before=hoprd.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+TimeoutStartSec=45
+ExecStart=/usr/bin/gvpn-exit-hoprd-address init

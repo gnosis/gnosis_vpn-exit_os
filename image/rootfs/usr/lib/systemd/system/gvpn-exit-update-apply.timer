@@ -1,0 +1,12 @@
+[Unit]
+Description=Apply staged OS updates in the 03:00-05:59 maintenance window
+ConditionPathExists=/var/lib/gvpn-exit/identity/provisioned
+
+[Timer]
+OnCalendar=*-*-* 03:00:00
+RandomizedDelaySec=2h
+Persistent=true
+Unit=gvpn-exit-update-apply.service
+
+[Install]
+WantedBy=timers.target

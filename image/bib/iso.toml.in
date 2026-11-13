@@ -1,0 +1,66 @@
+# bootc-image-builder config for the unattended installer ISO.
+# WARNING: installing wipes @WIPED_DISK@ without asking.
+# Rendered with the bastion inputs, the config (and the ISO) contains the
+# enrollment private key.
+[customizations.installer.kickstart]
+contents = """
+text --non-interactive
+lang en_US.UTF-8
+keyboard us
+timezone Etc/UTC --utc
+zerombr
+@DISK_PINNED_BEGIN@
+ignoredisk --only-use=@INSTALL_DISK@
+clearpart --all --initlabel --disklabel=gpt --drives=@INSTALL_DISK@
+@DISK_PINNED_END@
+@DISK_AUTO_BEGIN@
+# ignoredisk and clearpart for the disk the %pre below picks.
+%include /tmp/gvpn-install-disk.ks
+@DISK_AUTO_END@
+# Explicit sizes: autopart caps / at 70 GiB and leaves the rest unused.
+# / holds /var (hoprd DB and its reflink snapshots); swap is Fedora's zram.
+part /boot/efi --fstype=efi --size=600
+part /boot --fstype=xfs --size=2048
+part / --fstype=xfs --grow
+rootpw --lock
+@DEVOPS_USER@
+@DEVOPS_SSHKEY@
+reboot --eject
+@DISK_AUTO_BEGIN@
+
+# The install disk is picked on the device: the only internal disk, never the
+# installer media or a USB stick. With none or several the install stops here,
+# before anything is wiped. The body is image/bib/select-install-disk.sh.
+%pre --interpreter=/bin/bash --erroronfail
+@SELECT_INSTALL_DISK@
+%end
+@DISK_AUTO_END@
+@CONSOLE_BEGIN@
+
+# First access on the console (the console-configured ISO has no SSH key): the
+# operator logs in on a VM console or a hardware keyboard and monitor, changes
+# the expired password and adds their own keys. `incus console` attaches to
+# the serial port, while hardware is logged into on tty1, and a getty on a
+# serial port that is not there only restarts in a loop: enable it in a VM.
+%post --erroronfail
+chage -d 0 devops
+if systemd-detect-virt --quiet --vm; then
+  systemctl enable serial-getty@ttyS0.service
+fi
+%end
+@CONSOLE_END@
+@ENROLLMENT_BEGIN@
+
+# First access through a support bastion: enroll-tunnel.service dials it with
+# these while the device is unprovisioned. tools/render-bib-config.sh keeps
+# this block only when the bastion inputs are given; without them the device
+# is reached from its LAN alone.
+%post --erroronfail
+install -d -m 0755 /etc/gvpn-exit
+echo '@SUPPORT_ENV_B64@' | base64 -d > /etc/gvpn-exit/support.env
+echo '@BASTION_KNOWN_HOSTS_B64@' | base64 -d > /etc/gvpn-exit/bastion_known_hosts
+(umask 077; echo '@ENROLL_KEY_B64@' | base64 -d > /etc/gvpn-exit/enroll.key)
+chmod 0644 /etc/gvpn-exit/support.env /etc/gvpn-exit/bastion_known_hosts
+%end
+@ENROLLMENT_END@
+"""

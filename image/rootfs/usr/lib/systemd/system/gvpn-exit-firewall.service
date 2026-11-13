@@ -1,0 +1,21 @@
+[Unit]
+Description=GnosisVPN exit static firewall (IPv4 + IPv6)
+Documentation=file:///usr/share/gvpn-exit/iptables.rules
+# Loads before any network is configured. Every service that opens a socket
+# or forwards traffic Requires= this unit: no firewall, no listeners.
+DefaultDependencies=no
+Wants=network-pre.target
+Before=network-pre.target shutdown.target
+After=systemd-modules-load.service local-fs.target
+Conflicts=shutdown.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+# iptables-restore resolves ipset names while loading the ruleset.
+ExecStartPre=/usr/libexec/gvpn-exit/self-ipset.sh
+ExecStart=/usr/sbin/iptables-restore /usr/share/gvpn-exit/iptables.rules
+ExecStart=/usr/sbin/ip6tables-restore /usr/share/gvpn-exit/ip6tables.rules
+
+[Install]
+WantedBy=multi-user.target

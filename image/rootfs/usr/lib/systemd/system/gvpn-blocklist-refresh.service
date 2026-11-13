@@ -1,0 +1,18 @@
+[Unit]
+Description=Refresh GnosisVPN IP blocklist from threat feeds
+ConditionPathExists=/var/lib/gvpn-exit/identity/provisioned
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/libexec/gvpn-exit/gvpn-blocklist-update.sh --refresh
+# Defense-in-depth: this runs as root and fetches+parses untrusted feed data.
+# ipset operates over netlink (no extra caps needed beyond root); network egress
+# is left open for curl. Paths must match GVPN_BLOCKLIST_CACHE_DIR /
+# GVPN_BLOCKLIST_TEXTFILE_DIR in exit.env.
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ReadWritePaths=/var/lib/gvpn-blocklist /var/lib/node_exporter/textfile

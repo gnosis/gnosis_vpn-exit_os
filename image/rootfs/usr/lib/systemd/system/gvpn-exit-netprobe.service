@@ -1,0 +1,9 @@
+[Unit]
+Description=Report the public address and NAT situation and refresh self-address firewall protection
+ConditionPathExists=/var/lib/gvpn-exit/identity/provisioned
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/libexec/gvpn-exit/netprobe.sh

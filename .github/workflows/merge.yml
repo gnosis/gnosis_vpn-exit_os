@@ -1,0 +1,139 @@
+name: Build and Push
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+# Actions are pinned by commit, because a moving tag would let whoever controls
+# it change what runs next to the image-update signing key.
+permissions:
+  contents: read
+
+env:
+  GVPN_IMAGE_REPO: ${{ vars.GVPN_IMAGE_REPO || secrets.GVPN_IMAGE_REPO }}
+  # Optional: a repository of its own for the installer ISO. Empty publishes
+  # the ISO next to the image.
+  GVPN_ISO_REPO: ${{ vars.GVPN_ISO_REPO }}
+
+jobs:
+  build-and-push:
+    name: Build and Push
+    runs-on: ubuntu-24.04
+    # The signing key, its passphrase and the registry credentials are
+    # environment secrets: an environment can restrict them to a branch and
+    # require reviewers, which a repository secret cannot.
+    environment: release
+    steps:
+      # A convenience check, not the control: a dispatch from another branch
+      # runs that branch's copy of this workflow. The control is the branch
+      # restriction of the `release` environment.
+      - name: Require main
+        env:
+          REF: ${{ github.ref }}
+        run: |
+          if [[ "${REF}" != "refs/heads/main" ]]; then
+            echo "::error::This job signs and pushes an image; run it from main, not ${REF}"
+            exit 1
+          fi
+
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@ba0dd844c9180cbf77aa72a116d6fbc515d0e87b # v27
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+
+      # The image is built with the public half, so it is on disk before the
+      # build and the private half is not.
+      - name: Write the image-update public key
+        env:
+          COSIGN_PUB_CONTENT: ${{ vars.GVPN_COSIGN_PUB }}
+        run: |
+          if [[ -z "${COSIGN_PUB_CONTENT:-}" ]]; then
+            echo "::error::Set the GVPN_COSIGN_PUB repository variable to the public half of the image-update key (cosign generate-key-pair)"
+            exit 1
+          fi
+          mkdir -p "${RUNNER_TEMP}/keys"
+          printf '%s\n' "${COSIGN_PUB_CONTENT}" > "${RUNNER_TEMP}/keys/cosign.pub"
+          echo "GVPN_COSIGN_PUB=${RUNNER_TEMP}/keys/cosign.pub" >> "${GITHUB_ENV}"
+
+
+      - name: Check pinned image references
+        run: nix develop -c just check-pins
+
+      - name: Run just build
+        run: nix develop -c just build
+
+      # Build both artifacts before either is pushed: a failed ISO build must
+      # not leave an image version published on its own. The image is already
+      # in the builder's storage, so only the disk build runs here.
+      - name: Build the console-configured installer ISO
+        run: nix develop -c just iso-console-only
+
+      # The signing key is only on disk for the push.
+      - name: Write the image-update signing key
+        env:
+          COSIGN_KEY_CONTENT: ${{ secrets.GVPN_COSIGN_KEY }}
+          COSIGN_PASSPHRASE: ${{ secrets.GVPN_COSIGN_PASSPHRASE }}
+        run: |
+          if [[ -z "${COSIGN_KEY_CONTENT:-}" ]]; then
+            echo "::error::Set the GVPN_COSIGN_KEY secret (cosign generate-key-pair)"
+            exit 1
+          fi
+          printf '%s\n' "${COSIGN_KEY_CONTENT}" > "${RUNNER_TEMP}/keys/cosign.key"
+          chmod 0600 "${RUNNER_TEMP}/keys/cosign.key"
+          # An empty file is the passphrase of a key without one, and skopeo
+          # cannot ask for it on a runner.
+          printf '%s' "${COSIGN_PASSPHRASE:-}" > "${RUNNER_TEMP}/keys/cosign.passphrase"
+          chmod 0600 "${RUNNER_TEMP}/keys/cosign.passphrase"
+          {
+            echo "GVPN_COSIGN_KEY=${RUNNER_TEMP}/keys/cosign.key"
+            echo "GVPN_COSIGN_PASSPHRASE_FILE=${RUNNER_TEMP}/keys/cosign.passphrase"
+          } >> "${GITHUB_ENV}"
+
+      # Only the push talks to the registry: check-pins and the build pull
+      # public images.
+      # Any registry works: set GVPN_REGISTRY_USER and GVPN_REGISTRY_PASSWORD
+      # for the host in GVPN_IMAGE_REPO. A GVPN_ISO_REPO on another host is
+      # logged in to with the same account.
+      - name: Log in to the registry
+        env:
+          REGISTRY_USER: ${{ secrets.GVPN_REGISTRY_USER }}
+          REGISTRY_PASSWORD: ${{ secrets.GVPN_REGISTRY_PASSWORD }}
+        run: |
+          if [[ -z "${REGISTRY_USER:-}" || -z "${REGISTRY_PASSWORD:-}" ]]; then
+            echo "::error::Set the GVPN_REGISTRY_USER and GVPN_REGISTRY_PASSWORD secrets for ${GVPN_IMAGE_REPO%%/*}"
+            exit 1
+          fi
+          printf '%s' "${REGISTRY_PASSWORD}" \
+            | docker login "${GVPN_IMAGE_REPO%%/*}" --username "${REGISTRY_USER}" --password-stdin
+          if [[ -n "${GVPN_ISO_REPO:-}" && "${GVPN_ISO_REPO%%/*}" != "${GVPN_IMAGE_REPO%%/*}" ]]; then
+            printf '%s' "${REGISTRY_PASSWORD}" \
+              | docker login "${GVPN_ISO_REPO%%/*}" --username "${REGISTRY_USER}" --password-stdin
+          fi
+          echo "REGISTRY_AUTH_FILE=${DOCKER_CONFIG:-${HOME}/.docker}/config.json" >> "${GITHUB_ENV}"
+
+      # The ISO installs the image built above. Push its immutable artifact
+      # before the image so a failure here leaves no image version published
+      # on its own. A rerun rebuilds the image: --no-channel then finds
+      # iso-<version> published with another embedded image and fails this
+      # step, so the image step never pushes a build that differs from the
+      # one the published ISO embeds; release again from a new commit. It
+      # leaves iso-<version> alone only when it embeds this very build.
+      # iso-canary moves separately, together with a promoted image channel.
+      - name: Push the installer ISO (no channel tag)
+        run: nix develop -c just push-iso
+
+      - name: Run just push (push image without channel tag)
+        run: nix develop -c just push
+
+      - name: Cleanup signing keys
+        if: always()
+        run: rm -rf "${RUNNER_TEMP}/keys"

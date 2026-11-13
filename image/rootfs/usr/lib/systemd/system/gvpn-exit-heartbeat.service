@@ -1,0 +1,14 @@
+[Unit]
+Description=Report device state to the fleet backend
+ConditionPathExists=/var/lib/gvpn-exit/identity/provisioned
+ConditionPathExists=/etc/gvpn-exit/fleet.env
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+# The support key signs the heartbeat payload (see heartbeat.sh); the greenboot
+# hooks run the script without a credential directory and decrypt the sealed
+# credential themselves.
+LoadCredentialEncrypted=support.key:/var/lib/gvpn-exit/creds/support.key.cred
+ExecStart=/usr/libexec/gvpn-exit/heartbeat.sh

@@ -1,0 +1,63 @@
+#!/usr/bin/env bash
+# Initialize HOPRd's public address once, or refresh it explicitly as an operator.
+# Public-IP discovery does not establish NAT port forwarding or reachability.
+set -euo pipefail
+
+LIBEXEC="$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/../libexec/gvpn-exit"
+# shellcheck source=lib.sh
+source "${LIBEXEC}/lib.sh"
+load_exit_env
+# shellcheck source=public-ip.sh
+source "${LIBEXEC}/public-ip.sh"
+
+ADDRESS="${GVPN_STATE_DIR}/hoprd-host.env"
+SELF_IPSET_BIN="${GVPN_SELF_IPSET_BIN:-${LIBEXEC}/self-ipset.sh}"
+
+main() {
+  local command="${1:-}" public
+  case "${command}" in
+    init|refresh) ;;
+    *) log "usage: ${0} init|refresh"; return 64 ;;
+  esac
+  if ! is_provisioned; then
+    log "device is not provisioned"
+    return 1
+  fi
+
+  mkdir -p "${GVPN_RUN_DIR}" "${GVPN_STATE_DIR}"
+  exec 9>"${GVPN_RUN_DIR}/hoprd-address.lock"
+  flock -x 9
+  if [[ "${command}" == init && -s "${ADDRESS}" ]]; then
+    return 0
+  fi
+
+  if ! public="$(public_ip is_public_ipv4)"; then
+    if [[ "${command}" == init ]]; then
+      log "public IPv4 unavailable; starting HOPRd unannounced; retry on a later boot or run ${0} refresh"
+      return 0
+    fi
+    log "public IPv4 unavailable; HOPRd configuration unchanged"
+    return 1
+  fi
+
+  printf 'HOPRD_HOST=%s:9091\nHOPRD_ANNOUNCE=1\n' "${public}" | write_atomic "${ADDRESS}"
+  log "HOPRd address configuration saved: ${public}:9091"
+  # The address is saved either way; a failed set refresh only leaves the old
+  # addresses in the firewall until the next netprobe run, and must not stop
+  # the restart below.
+  if ! "${SELF_IPSET_BIN}"; then
+    log "WARN saved the address but failed to refresh the self-address ipset"
+  fi
+  # Restart may pull in the initialization service: release its lock first.
+  exec 9>&-
+  if [[ "${command}" == refresh ]]; then
+    if ! systemctl restart hoprd.service; then
+      log "configuration saved, but HOPRd activation failed; see journalctl -u hoprd.service"
+      return 1
+    fi
+  fi
+}
+
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+  main "$@"
+fi

@@ -1,0 +1,10 @@
+# Static IPv6 ruleset. Host IPv6 is disabled (sysctl + NetworkManager); this
+# keeps the host closed and VPN clients from forwarding over IPv6 even if IPv6
+# is ever re-enabled, so isolation never depends on a sysctl.
+*filter
+:INPUT DROP [0:0]
+:FORWARD DROP [0:0]
+:OUTPUT DROP [0:0]
+-A INPUT -i lo -j ACCEPT
+-A OUTPUT -o lo -j ACCEPT
+COMMIT

@@ -1,0 +1,34 @@
+#!/usr/bin/env bash
+# Bind sshd to the lan0 address and loopback whenever lan0's address changes.
+set -euo pipefail
+
+interface="${1:-}"
+action="${2:-}"
+listen_conf="${GVPN_SSHD_LISTEN_CONF:-/run/gvpn-exit/sshd_config.d/10-listen.conf}"
+# SELinux lets sshd read files of its own configuration's type, not a plain
+# /run file: a drop-in left with the type of its directory is skipped silently.
+label_reference="${GVPN_SSHD_LABEL_REFERENCE:-/etc/ssh/sshd_config}"
+
+[[ "${interface}" == "lan0" ]] || exit 0
+
+case "${action}" in
+  up|dhcp4-change)
+    # A lease change carries the leased address in DHCP4_IP_ADDRESS and not
+    # always a current IP4_ADDRESS_0 ("address/prefix gateway").
+    address="${DHCP4_IP_ADDRESS:-${IP4_ADDRESS_0:-}}"
+    address="${address%% *}"
+    address="${address%%/*}"
+    # The value becomes sshd configuration: an IPv4 address and nothing else.
+    [[ "${address}" =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}$ ]] || exit 0
+    mkdir -p "$(dirname "${listen_conf}")"
+    printf 'ListenAddress %s\nListenAddress 127.0.0.1\n' "${address}" > "${listen_conf}"
+    chcon --reference="${label_reference}" "${listen_conf}"
+    ;;
+  down)
+    rm -f "${listen_conf}"
+    ;;
+  *)
+    exit 0
+    ;;
+esac
+systemctl try-reload-or-restart sshd.service

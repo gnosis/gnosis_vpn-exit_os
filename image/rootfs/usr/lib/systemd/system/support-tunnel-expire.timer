@@ -1,0 +1,11 @@
+[Unit]
+Description=Reconcile the support tunnel with its window every 5 minutes
+ConditionPathExists=/var/lib/gvpn-exit/identity/provisioned
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=5min
+Unit=support-tunnel-expire.service
+
+[Install]
+WantedBy=timers.target

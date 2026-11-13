@@ -1,0 +1,30 @@
+---
+# hoprd v4 configuration used only by gvpn-exit-hoprd-migrate. It runs the v4
+# node on the old database and identity to close channels before v5 takes over;
+# the image's live configuration is hoprd.cfg.yaml.
+#
+# hoprd requires blokli_url in the file; the helper passes the URL from the v4
+# provisioning file as --blokliUrl. This placeholder satisfies validation.
+blokli_url: https://blokli.example.org
+hopr:
+  # The cleanup node never announces: the helper starts it with its p2p
+  # address on 127.0.0.1 and without HOPRD_HOST and HOPRD_ANNOUNCE, so nothing
+  # the device's address refresh wrote reaches it.
+  announce: false
+session_ip_forwarding:
+  # The only destinations session traffic may leave hoprd for: hoprd can
+  # never be used to reach the LAN. These are the GnosisVPN client's built-in
+  # session targets (172.30.0.1 is the session target address built into the
+  # client); gvpn-exit-loopback-alias.service keeps that address on lo.
+  target_allow_list:
+    - "172.30.0.1:8000"    # gnosis_vpn-server API
+    - "172.30.0.1:51820"   # WireGuard (wggvpn)
+strategy:
+  # The helper runs only to close channels and redeem tickets. No
+  # ChannelLifecycle strategy may reopen a channel while the migration is
+  # finalising the outgoing ones.
+  allow_recursive: false
+  execution_interval: 15s
+  strategies:
+    - AutoRedeeming:
+        minimum_redeem_ticket_value: "1 wxHOPR"

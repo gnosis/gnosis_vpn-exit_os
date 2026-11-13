@@ -1,0 +1,7 @@
+[Unit]
+Description=hoprd health check and restart counter
+ConditionPathExists=/var/lib/gvpn-exit/identity/provisioned
+
+[Service]
+Type=oneshot
+ExecStart=/usr/libexec/gvpn-exit/hoprd-health.sh

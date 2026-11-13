@@ -1,0 +1,91 @@
+name: Promote Image
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version label or digest to promote: the version label printed by the build, a tag such as 1.2.3, or sha256:...'
+        required: true
+        type: string
+      channel:
+        description: 'Target channel to promote to'
+        required: true
+        type: choice
+        options:
+          - canary
+          - stable
+        default: canary
+
+# Actions are pinned by commit: a moving tag could change what verifies
+# signatures and moves a channel the devices track.
+permissions:
+  contents: read
+
+env:
+  GVPN_IMAGE_REPO: ${{ vars.GVPN_IMAGE_REPO || secrets.GVPN_IMAGE_REPO }}
+
+jobs:
+  promote:
+    name: Promote
+    runs-on: ubuntu-24.04
+    # The registry credentials are environment secrets: an environment can
+    # restrict them to a branch and require reviewers, which a repository
+    # secret cannot.
+    environment: release
+    steps:
+      # A convenience check, not the control: a dispatch from another branch
+      # runs that branch's copy of this workflow. The control is the branch
+      # restriction of the `release` environment.
+      - name: Require main
+        env:
+          REF: ${{ github.ref }}
+        run: |
+          if [[ "${REF}" != "refs/heads/main" ]]; then
+            echo "::error::This job moves a channel the devices track; run it from main, not ${REF}"
+            exit 1
+          fi
+
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@ba0dd844c9180cbf77aa72a116d6fbc515d0e87b # v27
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+
+      # Any registry works: set GVPN_REGISTRY_USER and GVPN_REGISTRY_PASSWORD
+      # for the host in GVPN_IMAGE_REPO.
+      - name: Log in to the registry
+        env:
+          REGISTRY_USER: ${{ secrets.GVPN_REGISTRY_USER }}
+          REGISTRY_PASSWORD: ${{ secrets.GVPN_REGISTRY_PASSWORD }}
+        run: |
+          if [[ -z "${REGISTRY_USER:-}" || -z "${REGISTRY_PASSWORD:-}" ]]; then
+            echo "::error::Set the GVPN_REGISTRY_USER and GVPN_REGISTRY_PASSWORD secrets for ${GVPN_IMAGE_REPO%%/*}"
+            exit 1
+          fi
+          printf '%s' "${REGISTRY_PASSWORD}" \
+            | docker login "${GVPN_IMAGE_REPO%%/*}" --username "${REGISTRY_USER}" --password-stdin
+          echo "REGISTRY_AUTH_FILE=${DOCKER_CONFIG:-${HOME}/.docker}/config.json" >> "${GITHUB_ENV}"
+
+      - name: Write the image-update public key
+        env:
+          COSIGN_PUB_CONTENT: ${{ vars.GVPN_COSIGN_PUB }}
+        run: |
+          if [[ -z "${COSIGN_PUB_CONTENT:-}" ]]; then
+            echo "::error::Set the GVPN_COSIGN_PUB repository variable to the public half of the image-update key"
+            exit 1
+          fi
+          mkdir -p "${RUNNER_TEMP}/keys"
+          printf '%s\n' "${COSIGN_PUB_CONTENT}" > "${RUNNER_TEMP}/keys/cosign.pub"
+          echo "GVPN_COSIGN_PUB=${RUNNER_TEMP}/keys/cosign.pub" >> "${GITHUB_ENV}"
+
+      - name: Run tools/promote.sh
+        env:
+          VERSION: ${{ inputs.version }}
+          CHANNEL: ${{ inputs.channel }}
+        run: |
+          nix develop -c tools/promote.sh "${VERSION}" "${CHANNEL}"

@@ -1,0 +1,405 @@
+#!/usr/bin/env bash
+# Provisioning of a GnosisVPN exit appliance (run as root via sudo).
+#
+#   gvpn-exit-provision identity
+#       Create the hoprd identity, identity password, API token, WireGuard key
+#       and support SSH key, seal each with systemd-creds to this device's
+#       TPM2 and print the node address, peer id and support public key.
+#
+#   gvpn-exit-provision finalize --safe-address 0x.. --module-address 0x..
+#       --blokli-url https://.. --location "City, CC"
+#       [--support-port N] [--bastion user@host] [--support-days N]
+#       [--fleet-url https://..]
+#       [--peer-rate-kbit N] [--aggregate-kbit N] [--peer-max-octet N]
+#       Write the network config, record data ownership and the provisioning
+#       record, and write the `provisioned` marker last. Reboot afterwards.
+#       The support port and bastion default to what the installer wrote for
+#       the enrollment tunnel; with a bastion a support window is opened (default
+#       length: default_support_days) so the sealed support key takes over the
+#       tunnel after the reboot. The enrollment key is removed at the end.
+#       The shaping flags pin values that the boot-time uplink measurement would
+#       otherwise derive (capacity.sh, exit.env); use them only for a link whose
+#       capacity is known before the device has measured it.
+#       --blokli-url and --fleet-url take a plain https:// URL: a host name or
+#       IPv4 address, an optional port and path. A URL that carries credentials
+#       (https://user:pass@host) or an IPv6 literal host is refused, because
+#       neither Blokli nor a fleet endpoint needs one and both would end up in
+#       a configuration file and in hoprd's environment.
+#       --blokli-url is required and has no built-in default; the endpoint
+#       operators pass is https://blokli.piz-palu.gnosisvpn.io.
+#
+#   gvpn-exit-provision status
+#
+# Secrets exist in plaintext only in a 0700 tmpfs work dir that is removed on
+# exit. Credentials are sealed to the TPM only (a host key on the unencrypted
+# root would add nothing) and without a PCR policy, so firmware updates and a
+# later Secure Boot enrollment do not make them undecryptable.
+set -euo pipefail
+
+BIN_DIR="$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")"
+# shellcheck source=SCRIPTDIR/../libexec/gvpn-exit/lib.sh
+source "${BIN_DIR}/../libexec/gvpn-exit/lib.sh"
+
+GVPN_ETC_DIR="${GVPN_ETC_DIR:-/etc/gvpn-exit}"
+GVPN_DMI_SERIAL="${GVPN_DMI_SERIAL:-/sys/class/dmi/id/product_serial}"
+GVPN_MACHINE_ID="${GVPN_MACHINE_ID:-/etc/machine-id}"
+GVPN_WORK_PARENT="${GVPN_WORK_PARENT:-/run}"
+NODE_JSON="${GVPN_IDENTITY_DIR}/node.json"
+SUPPORT_ENV="${GVPN_ETC_DIR}/support.env"
+ENROLL_KEY="${GVPN_ETC_DIR}/enroll.key"
+CREDENTIAL_IDS=(hopr.id hoprd.password hoprd.api-token wg.key support.key)
+ADDRESS_RE='^0x[0-9a-fA-F]{40}$'
+# user@host, or ssh://user@host:port. support.env is one KEY=VALUE line per
+# entry, so a value with whitespace or a newline would rewrite the file.
+BASTION_RE='^([a-z_][a-z0-9_-]*@[A-Za-z0-9.-]+|ssh://[a-z_][a-z0-9_-]*@[A-Za-z0-9.-]+(:[0-9]+)?)$'
+
+WORK_DIR=""
+STAGE_DIR=""
+cleanup() {
+  if [[ -n "${WORK_DIR}" ]]; then
+    rm -rf "${WORK_DIR}"
+  fi
+  if [[ -n "${STAGE_DIR}" ]]; then
+    rm -rf "${STAGE_DIR}"
+  fi
+}
+trap cleanup EXIT
+
+die() {
+  log "ERROR $*"
+  exit 1
+}
+
+# Values boards report in product_serial instead of a serial. They would give
+# every such board the same device id, so they fall back like an empty serial.
+SERIAL_PLACEHOLDERS=(
+  'default string'
+  'to be filled by o.e.m.'
+  'system serial number'
+  'not specified'
+  'none'
+  'n/a'
+  'unknown'
+  'chassis serial number'
+)
+
+# A serial is compared lowercased and with every whitespace removed, so a
+# placeholder matches however the firmware spaces it.
+serial_is_placeholder() {
+  local serial="${1,,}" placeholder
+  serial="${serial//[[:space:]]/}"
+  [[ -n "${serial}" ]] || return 0
+  # A serial of nothing but zeros identifies no board either.
+  if [[ "${serial}" =~ ^0+$ ]]; then
+    return 0
+  fi
+  for placeholder in "${SERIAL_PLACEHOLDERS[@]}"; do
+    if [[ "${serial}" == "${placeholder//[[:space:]]/}" ]]; then
+      return 0
+    fi
+  done
+  return 1
+}
+
+# Device serial from the firmware; machines without one (VMs, boards that report
+# a placeholder) use the machine id.
+device_serial() {
+  local serial=""
+  if [[ -r "${GVPN_DMI_SERIAL}" ]]; then
+    serial="$(tr -d '[:space:]' < "${GVPN_DMI_SERIAL}")"
+  fi
+  if serial_is_placeholder "${serial}"; then
+    serial="$(tr -d '[:space:]' < "${GVPN_MACHINE_ID}")"
+  fi
+  echo "${serial}"
+}
+
+random_hex() {
+  head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n'
+}
+
+# seal ID PLAIN DIR: write DIR/ID.cred
+seal() {
+  local id="$1" plain="$2" dir="$3"
+  systemd-creds encrypt --with-key=tpm2 --tpm2-device=auto --tpm2-pcrs= \
+    --name="${id}" "${plain}" "${dir}/${id}.cred"
+}
+
+cmd_identity() {
+  local password address peer_id wg_pub support_pub serial id
+  if [[ -e "${GVPN_CREDS_DIR}/hopr.id.cred" ]]; then
+    die "an identity already exists in ${GVPN_CREDS_DIR}; refusing to replace it"
+  fi
+  systemd-analyze has-tpm2 >/dev/null || die "no usable TPM2 (enable fTPM in the BIOS)"
+
+  umask 077
+  mkdir -p "${GVPN_CREDS_DIR}" "${GVPN_IDENTITY_DIR}" "${GVPN_STATE_DIR}"
+  WORK_DIR="$(mktemp -d "${GVPN_WORK_PARENT}/gvpn-exit-provision.XXXXXX")"
+
+  password="$(random_hex)"
+  printf '%s' "${password}" > "${WORK_DIR}/hoprd.password"
+  random_hex > "${WORK_DIR}/hoprd.api-token"
+  IDENTITY_PASSWORD="${password}" hopli identity create --identity-directory "${WORK_DIR}" --identity-prefix hopr >/dev/null
+  mv "${WORK_DIR}/hopr0.id" "${WORK_DIR}/hopr.id"
+  wg genkey > "${WORK_DIR}/wg.key"
+  wg_pub="$(wg pubkey < "${WORK_DIR}/wg.key")"
+  serial="$(device_serial)"
+  ssh-keygen -q -t ed25519 -N '' -C "gvpn-exit-support-${serial}" -f "${WORK_DIR}/support.key"
+  support_pub="$(< "${WORK_DIR}/support.key.pub")"
+
+  local read_output
+  read_output="$(IDENTITY_PASSWORD="${password}" hopli identity read --identity-from-path "${WORK_DIR}/hopr.id")"
+  # hopli also logs the public keys on stdout; only the addresses line holds
+  # the node (chain key) address that gets funded.
+  address="$(sed -n 's/^Identity addresses: \[\(0x[0-9a-fA-F]\{40\}\)\]$/\1/p' <<< "${read_output}")"
+  peer_id="$(sed -n 's/^Identity peerids: \[\(.*\)\]$/\1/p' <<< "${read_output}")"
+  [[ -n "${address}" && -n "${peer_id}" ]] || die "could not read the node address back from the new identity"
+
+  # Everything is sealed into a staging directory and published with
+  # hopr.id.cred last: its presence means a complete identity (to the check
+  # above and to finalize), so a failed attempt leaves nothing that blocks a
+  # retry.
+  STAGE_DIR="$(mktemp -d "${GVPN_CREDS_DIR}/.staging.XXXXXX")"
+  for id in "${CREDENTIAL_IDS[@]}"; do
+    seal "${id}" "${WORK_DIR}/${id}" "${STAGE_DIR}"
+  done
+
+  echo "${serial}" | write_atomic "${GVPN_IDENTITY_DIR}/serial"
+  jq -n --arg node_address "${address}" --arg peer_id "${peer_id}" \
+    --arg wg_public_key "${wg_pub}" --arg support_public_key "${support_pub}" \
+    '{node_address: $node_address, peer_id: $peer_id, wg_public_key: $wg_public_key, support_public_key: $support_public_key}' \
+    | write_atomic "${NODE_JSON}"
+
+  for id in "${CREDENTIAL_IDS[@]}"; do
+    [[ "${id}" == hopr.id ]] || mv -f "${STAGE_DIR}/${id}.cred" "${GVPN_CREDS_DIR}/"
+  done
+  mv -f "${STAGE_DIR}/hopr.id.cred" "${GVPN_CREDS_DIR}/"
+
+  cat <<EOF
+
+Identity created and sealed to this device's TPM.
+
+  node address   ${address}
+  peer id        ${peer_id}
+  serial         ${serial}
+  support key    ${support_pub}
+
+Next: in the operator's secure environment, use hopli to create and fund the
+Safe + module for this node address.
+EOF
+  # The installer writes support.env only for a device that is administered
+  # through a bastion; a device without one is reached from its LAN alone.
+  if [[ -s "${SUPPORT_ENV}" ]]; then
+    cat <<EOF
+Then add the support key to the bastion
+(same permitlisten as the enrollment key) and run
+  sudo gvpn-exit-provision finalize --safe-address 0x.. --module-address 0x.. \\
+    --blokli-url https://.. --location "City, CC" [...]
+Once the device is back after the reboot, remove the enrollment key from the
+bastion.
+EOF
+  else
+    cat <<EOF
+Then run
+  sudo gvpn-exit-provision finalize --safe-address 0x.. --module-address 0x.. \\
+    --blokli-url https://.. --location "City, CC" [...]
+No support tunnel will be opened: no support bastion is configured, so this
+device is reached over SSH from its LAN only.
+EOF
+  fi
+}
+
+# Value of KEY in the support.env the installer (or an earlier finalize) wrote.
+support_env_value() {
+  [[ -f "${SUPPORT_ENV}" ]] || return 0
+  sed -n "s/^$1=//p" "${SUPPORT_ENV}" | tail -1
+}
+
+# Days of the support window finalize opens when the operator gives no
+# --support-days, so the operator can still reach the device through the
+# bastion after the provisioning reboot. Prints a number in 1..90.
+default_support_days() {
+  echo 90
+}
+
+# capacity_resolves PEER_RATE AGGREGATE PEER_MAX
+# Evaluate the shaping flags the way the boot evaluates the file they are
+# appended to: image defaults, then /etc/gvpn-exit/exit.env, then the flags, then
+# one resolve. Prints why the derived capacity is empty and fails when
+# resolve_capacity leaves the peer count, the ceiling or the guarantee empty:
+# finalize would otherwise write a combination that survives a rollback and keeps
+# the VPN server from shaping on every boot.
+capacity_resolves() {
+  local peer_rate="$1" aggregate="$2" peer_max="$3"
+  (
+    # Not load_exit_env: it resolves the capacity, and a second resolve would
+    # take the pool of the first one instead of deriving it from the aggregate
+    # the flags pin.
+    # shellcheck source=/dev/null
+    source "${GVPN_EXIT_DEFAULTS}"
+    load_overrides
+    [[ -z "${peer_rate}" ]] || GVPN_PEER_RATE_KBIT="${peer_rate}"
+    [[ -z "${aggregate}" ]] || GVPN_PEER_SHAPING_AGGREGATE_KBIT="${aggregate}"
+    [[ -z "${peer_max}" ]] || GVPN_PEER_MAX_OCTET="${peer_max}"
+    load_capacity_cache
+    resolve_capacity
+    if [[ -n "${GVPN_PEER_COUNT}" && -n "${GVPN_PEER_CEIL_KBIT}" && -n "${GVPN_PEER_GUARANTEE_KBIT}" ]]; then
+      return 0
+    fi
+    printf 'aggregate %s kbit/s over the octets %s..%s leaves no per-peer share\n' \
+      "${GVPN_PEER_SHAPING_AGGREGATE_KBIT:-unknown}" "${GVPN_PEER_MIN_OCTET}" "${GVPN_PEER_MAX_OCTET:-unknown}"
+    return 1
+  )
+}
+
+cmd_finalize() {
+  local safe="" module="" blokli="" location="" support_port="" bastion="" support_days=""
+  local fleet_url="" peer_rate="" aggregate="" peer_max=""
+  while (( $# )); do
+    case "$1" in
+      --safe-address) safe="$2"; shift 2 ;;
+      --module-address) module="$2"; shift 2 ;;
+      --blokli-url) blokli="$2"; shift 2 ;;
+      --location) location="$2"; shift 2 ;;
+      --support-port) support_port="$2"; shift 2 ;;
+      --bastion) bastion="$2"; shift 2 ;;
+      --support-days) support_days="$2"; shift 2 ;;
+      --fleet-url) fleet_url="$2"; shift 2 ;;
+      --peer-rate-kbit) peer_rate="$2"; shift 2 ;;
+      --aggregate-kbit) aggregate="$2"; shift 2 ;;
+      --peer-max-octet) peer_max="$2"; shift 2 ;;
+      *) die "unknown option $1" ;;
+    esac
+  done
+
+  [[ -s "${NODE_JSON}" && -e "${GVPN_CREDS_DIR}/hopr.id.cred" ]] || die "run 'gvpn-exit-provision identity' first"
+  if is_provisioned; then
+    die "already provisioned at $(< "${GVPN_IDENTITY_DIR}/provisioned"); this only runs once"
+  fi
+  [[ "${safe}" =~ ${ADDRESS_RE} ]] || die "--safe-address must be a 0x-prefixed 20-byte address"
+  [[ "${module}" =~ ${ADDRESS_RE} ]] || die "--module-address must be a 0x-prefixed 20-byte address"
+  https_url_ok "${blokli}" \
+    || die "--blokli-url must be an https:// URL with a host name or IPv4 address and no userinfo (user:pass@host), whitespace, quotes or shell metacharacters"
+  [[ -n "${location}" ]] || die "--location is required"
+  support_port="${support_port:-$(support_env_value SUPPORT_PORT)}"
+  bastion="${bastion:-$(support_env_value BASTION)}"
+  [[ -z "${support_port}" || "${support_port}" =~ ^[0-9]+$ ]] || die "--support-port must be a number"
+  [[ -z "${bastion}" || "${bastion}" =~ ${BASTION_RE} ]] \
+    || die "--bastion must be user@host or ssh://user@host:port, got '${bastion}'"
+  if [[ -n "${support_port}" && -z "${bastion}" ]] || [[ -z "${support_port}" && -n "${bastion}" ]]; then
+    die "the support tunnel needs both a port and a bastion (flags or the installer's ${SUPPORT_ENV})"
+  fi
+  if [[ -n "${support_port}" && -z "${support_days}" ]]; then
+    support_days="$(default_support_days)"
+  fi
+  # Checked here rather than left to `gvpn-exit-support extend`, which runs
+  # after the first files are written: a window that cannot be opened has to
+  # cost nothing.
+  if [[ -n "${support_days}" ]]; then
+    if [[ ! "${support_days}" =~ ^[1-9][0-9]*$ ]] || (( support_days > GVPN_SUPPORT_MAX_DAYS )); then
+      die "--support-days must be an integer between 1 and ${GVPN_SUPPORT_MAX_DAYS}"
+    fi
+    ntp_synchronized || die "refusing to open a support window while the clock is not NTP-synchronized"
+  fi
+  [[ -z "${fleet_url}" ]] || https_url_ok "${fleet_url}" \
+    || die "--fleet-url must be an https:// URL with a host name or IPv4 address and no userinfo (user:pass@host), whitespace, quotes or shell metacharacters"
+  # The runtime accepts a rate only as kbit_ok (1..9999999999 without a leading
+  # zero); a value it rejects would land in a file that survives a rollback and
+  # keep the shaping unit from starting on every boot.
+  [[ -z "${peer_rate}" ]] || kbit_ok "${peer_rate}" \
+    || die "--peer-rate-kbit must be a number of kbit/s between 1 and 9999999999 without leading zeros"
+  [[ -z "${aggregate}" ]] || kbit_ok "${aggregate}" \
+    || die "--aggregate-kbit must be a number of kbit/s between 1 and 9999999999 without leading zeros"
+  [[ -z "${peer_max}" || "${peer_max}" =~ ^[0-9]+$ ]] || die "--peer-max-octet must be a number"
+  load_exit_env
+  # The same bounds render-wg-conf.sh enforces on every server start.
+  if [[ -n "${peer_max}" ]]; then
+    peer_octet_range_ok "${GVPN_PEER_MIN_OCTET}" "${peer_max}" \
+      || die "--peer-max-octet must be a number within ${GVPN_PEER_MIN_OCTET}..254 without leading zeros"
+  fi
+  local reason
+  if ! reason="$(capacity_resolves "${peer_rate}" "${aggregate}" "${peer_max}")"; then
+    die "the shaping overrides cannot be used: ${reason}"
+  fi
+
+  local deployment
+  deployment="$(booted_image_digest)"
+  [[ -n "${deployment}" ]] || die "bootc reports no booted image digest"
+
+  mkdir -p "${GVPN_HOPRD_ENV_DIR}" "${GVPN_ETC_DIR}" "${GVPN_STATE_DIR}"
+  (
+    umask 077
+    printf 'HOPRD_SAFE_ADDRESS=%s\nHOPRD_MODULE_ADDRESS=%s\nHOPRD_BLOKLI_URL=%s\n' "${safe}" "${module}" "${blokli}" \
+      > "${GVPN_HOPRD_ENV_DIR}/10-provisioned.env"
+  )
+  {
+    [[ -n "${peer_rate}" ]] && echo "GVPN_PEER_RATE_KBIT=${peer_rate}"
+    [[ -n "${aggregate}" ]] && echo "GVPN_PEER_SHAPING_AGGREGATE_KBIT=${aggregate}"
+    [[ -n "${peer_max}" ]] && echo "GVPN_PEER_MAX_OCTET=${peer_max}"
+    true
+  } >> "${GVPN_EXIT_OVERRIDES}"
+
+  if [[ -n "${support_port}" ]]; then
+    printf 'SUPPORT_PORT=%s\nBASTION=%s\n' "${support_port}" "${bastion}" | write_atomic "${SUPPORT_ENV}"
+  fi
+  if [[ -n "${fleet_url}" ]]; then
+    # Read back by heartbeat.sh, which parses the line: the value never reaches
+    # a shell as code, and https_url_ok above keeps it a plain URL.
+    printf 'GVPN_FLEET_URL=%s\n' "${fleet_url}" | write_atomic "${GVPN_ETC_DIR}/fleet.env"
+  fi
+  if [[ -n "${support_days}" ]]; then
+    "${BIN_DIR}/gvpn-exit-support" extend "${support_days}"
+  fi
+
+  echo "${deployment}" | write_atomic "${GVPN_STATE_DIR}/data-owner"
+
+  jq -n \
+    --argjson node "$(< "${NODE_JSON}")" \
+    --arg safe "${safe}" --arg module "${module}" --arg blokli "${blokli}" \
+    --arg serial "$(< "${GVPN_IDENTITY_DIR}/serial")" \
+    --arg support_port "${support_port}" --arg location "${location}" \
+    --arg image_digest "${deployment}" \
+    --arg provisioned_at "$(date -u -d "@$(now_epoch)" +%Y-%m-%dT%H:%M:%SZ)" \
+    '$node + {
+      safe_address: $safe,
+      module_address: $module,
+      blokli_url: $blokli,
+      serial: $serial,
+      support_port: ($support_port | select(. != "") // null),
+      exit: {gnosis_vpn_server: "172.30.0.1:8000", wireguard_server: "172.30.0.1:51820", location: $location},
+      image_digest: $image_digest,
+      provisioned_at: $provisioned_at
+    }' | write_atomic "${GVPN_IDENTITY_DIR}/provisioning.json"
+
+  date -u -d "@$(now_epoch)" +%Y-%m-%dT%H:%M:%SZ | write_atomic "${GVPN_IDENTITY_DIR}/provisioned"
+  # The running enrollment tunnel keeps its session; from the reboot on the
+  # support tunnel with the sealed key replaces it.
+  rm -f "${ENROLL_KEY}"
+  sync
+
+  echo
+  echo "Provisioning record (keep it): the node address has to be on the GnosisVPN"
+  echo "client destination list before clients use this exit (docs/first-install.md)."
+  cat "${GVPN_IDENTITY_DIR}/provisioning.json"
+  echo
+  echo "Device provisioned. Reboot to start the exit node: sudo systemctl reboot"
+}
+
+cmd_status() {
+  if is_provisioned; then
+    echo "provisioned at $(< "${GVPN_IDENTITY_DIR}/provisioned")"
+    cat "${GVPN_IDENTITY_DIR}/provisioning.json"
+  elif [[ -s "${NODE_JSON}" ]]; then
+    echo "identity created, not finalized"
+    cat "${NODE_JSON}"
+  else
+    echo "unprovisioned"
+  fi
+}
+
+case "${1:-}" in
+  identity) cmd_identity ;;
+  finalize) shift; cmd_finalize "$@" ;;
+  status) cmd_status ;;
+  *) echo "usage: ${0} identity|finalize|status" >&2; exit 64 ;;
+esac

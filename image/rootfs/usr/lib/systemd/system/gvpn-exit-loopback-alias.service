@@ -1,0 +1,16 @@
+[Unit]
+Description=GnosisVPN session target loopback alias
+Documentation=file:///usr/libexec/gvpn-exit/loopback-alias.sh
+# The GnosisVPN client defaults its bridge and WireGuard session targets to
+# 172.30.0.1. The address lives on lo so hoprd reaches the local services
+# there; gnosisvpn-server binds it and requires this unit first.
+Before=gnosisvpn-server.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/libexec/gvpn-exit/loopback-alias.sh up
+ExecStop=/usr/libexec/gvpn-exit/loopback-alias.sh down
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,4 @@
+# devops logs in over SSH with a key only (no password), from the LAN or
+# through the support tunnel. A console-configured ISO also gives devops a
+# console password, on hardware or in a VM, until the operator locks it.
+devops ALL=(ALL) NOPASSWD: ALL

@@ -1,0 +1,90 @@
+name: PR
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+# Actions are pinned by commit, because a moving tag would let whoever controls
+# it change what runs.
+permissions:
+  contents: read
+
+env:
+  GVPN_IMAGE_REPO: ${{ vars.GVPN_IMAGE_REPO || secrets.GVPN_IMAGE_REPO }}
+
+jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@ba0dd844c9180cbf77aa72a116d6fbc515d0e87b # v27
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+
+      - name: Run just lint
+        run: nix develop -c just lint
+
+  test:
+    name: Test
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@ba0dd844c9180cbf77aa72a116d6fbc515d0e87b # v27
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+
+      - name: Run just test
+        run: nix develop -c just test
+
+  build:
+    name: Build
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@ba0dd844c9180cbf77aa72a116d6fbc515d0e87b # v27
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+
+      - name: Write the image-update public key
+        env:
+          COSIGN_PUB_CONTENT: ${{ vars.GVPN_COSIGN_PUB }}
+        run: |
+          if [[ -z "${COSIGN_PUB_CONTENT:-}" ]]; then
+            echo "::error::Set the GVPN_COSIGN_PUB repository variable to the public half of the image-update key (cosign generate-key-pair)"
+            exit 1
+          fi
+          mkdir -p "${RUNNER_TEMP}/keys"
+          printf '%s\n' "${COSIGN_PUB_CONTENT}" > "${RUNNER_TEMP}/keys/cosign.pub"
+          echo "GVPN_COSIGN_PUB=${RUNNER_TEMP}/keys/cosign.pub" >> "${GITHUB_ENV}"
+
+
+      - name: Check pinned image references
+        run: nix develop -c just check-pins
+
+      - name: Run just build
+        run: nix develop -c just build
+
+      - name: Build the console-configured installer ISO
+        run: nix develop -c just iso-console-only

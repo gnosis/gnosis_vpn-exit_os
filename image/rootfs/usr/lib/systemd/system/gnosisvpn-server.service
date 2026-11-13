@@ -1,0 +1,41 @@
+[Unit]
+Description=GnosisVPN server (WireGuard exit behind hoprd)
+ConditionPathExists=/var/lib/gvpn-exit/identity/provisioned
+Requires=gvpn-exit-firewall.service gvpn-exit-loopback-alias.service
+# The capacity probe sizes the client pool and the shaping tree before the
+# server renders its config; it is best effort, so it is wanted, not required.
+Wants=network-online.target gvpn-blocklist-boot.service gvpn-exit-capacity.service
+After=network-online.target gvpn-exit-firewall.service gvpn-exit-loopback-alias.service gvpn-blocklist-boot.service gvpn-exit-capacity.service
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+LoadCredentialEncrypted=wg.key:/var/lib/gvpn-exit/creds/wg.key.cred
+RuntimeDirectory=gnosisvpn-server
+RuntimeDirectoryMode=0700
+StateDirectory=gnosisvpn-server
+WorkingDirectory=/var/lib/gnosisvpn-server
+ExecStartPre=/usr/libexec/gvpn-exit/render-wg-conf.sh
+# --sync-wg-interface brings wggvpn up via wg-quick, which runs wg-hooks.sh
+ExecStart=/usr/bin/gnosis_vpn-server --config-file /run/gnosisvpn-server/config.toml serve --periodically-run-cleanup --sync-wg-interface
+# gnosis_vpn-server takes wggvpn down on exit; this is the backstop after a crash
+ExecStopPost=-/usr/bin/wg-quick down /run/gnosisvpn-server/wggvpn.conf
+Restart=always
+RestartSec=30
+KillSignal=SIGTERM
+TimeoutStopSec=90
+CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_RAW
+# The server needs NET_ADMIN/NET_RAW for wg-quick and the iptables/ipset/tc
+# hooks it runs inside this namespace. /run stays writable because those hooks
+# need /run/xtables.lock, and a ReadWritePaths= entry for a file that does not
+# exist fails the whole unit; its own runtime and state directories are
+# declared above and made writable by systemd.
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+NoNewPrivileges=yes
+SystemCallFilter=@system-service
+ReadWritePaths=/run
+
+[Install]
+WantedBy=multi-user.target

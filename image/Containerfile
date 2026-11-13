@@ -1,0 +1,181 @@
+# GnosisVPN exit node appliance OS: Fedora IoT (image mode) + hoprd +
+# gnosis_vpn-server. Build from the repo root with the pins from
+# image/versions.env passed as build args (`just build`).
+ARG FEDORA_IOT_IMAGE
+ARG HOPRD_IMAGE
+
+# --- hoprd-pix: take the PIX-enabled binary and its proving artifacts ---
+# The GitHub release binary is built without `strategy-pix-curvy`; the OCI
+# image is the published PIX build. Only the two binaries and the flat ZK
+# artifact directory leave this stage, not the image's Nix closure.
+FROM ${HOPRD_IMAGE} AS hoprd-pix
+RUN mkdir -p /out/bin /out/curvy-zk \
+ && cp "$(readlink -f /bin/hoprd)" /out/bin/hoprd \
+ && cp "$(readlink -f /bin/hoprd-cfg)" /out/bin/hoprd-cfg \
+ && cp -aL /nix/store/*-curvy-zk-artifacts-*/. /out/curvy-zk/
+
+# --- fetch: download and verify release binaries, snapshot the blocklist ---
+FROM ${FEDORA_IOT_IMAGE} AS fetch
+ARG HOPRD_SHA256
+ARG HOPRD_CFG_SHA256
+ARG HOPRD_V4_VERSION
+ARG HOPRD_V4_SHA256
+ARG HOPRD_V4_CFG_SHA256
+ARG FOUNDRY_VERSION
+ARG FOUNDRY_SHA256
+ARG HOPLI_VERSION
+ARG HOPLI_SHA256
+ARG GVPN_SERVER_VERSION
+ARG GVPN_SERVER_SHA256
+
+RUN command -v gpgv >/dev/null || dnf -y install gnupg2
+COPY keys/hoprnet-release.asc keys/gnosisvpn-release.asc /keys/
+COPY image/build/fetch-release.sh image/build/snapshot-blocklist.sh /build/
+RUN mkdir -p /out/bin /out/libexec \
+ && /build/fetch-release.sh \
+      "https://github.com/hoprnet/hoprd/releases/download/v${HOPRD_V4_VERSION}/hoprd-x86_64-linux" \
+      "${HOPRD_V4_SHA256}" /keys/hoprnet-release.asc /out/libexec/hoprd-v4 \
+ && /build/fetch-release.sh \
+      "https://github.com/hoprnet/hoprd/releases/download/v${HOPRD_V4_VERSION}/hoprd-cfg-x86_64-linux" \
+      "${HOPRD_V4_CFG_SHA256}" /keys/hoprnet-release.asc /out/libexec/hoprd-cfg-v4 \
+ && /build/fetch-release.sh \
+      "https://github.com/hoprnet/hopli/releases/download/v${HOPLI_VERSION}/hopli-x86_64-linux" \
+      "${HOPLI_SHA256}" /keys/hoprnet-release.asc /out/bin/hopli \
+ && /build/fetch-release.sh \
+      "https://github.com/gnosis/gnosis_vpn-server/releases/download/v${GVPN_SERVER_VERSION}/gnosis_vpn-server-x86_64-linux" \
+      "${GVPN_SERVER_SHA256}" /keys/gnosisvpn-release.asc /out/bin/gnosis_vpn-server \
+ && curl -fsSL --retry 3 -o /tmp/foundry.tar.gz \
+      "https://github.com/foundry-rs/foundry/releases/download/v${FOUNDRY_VERSION}/foundry_v${FOUNDRY_VERSION}_linux_amd64.tar.gz" \
+ && echo "${FOUNDRY_SHA256}  /tmp/foundry.tar.gz" | sha256sum --check --quiet \
+ && tar -xzf /tmp/foundry.tar.gz -C /out/bin cast \
+ && rm -f /tmp/foundry.tar.gz
+# The v5 binaries arrive from the PIX image. Their hash pins are checked here,
+# in a stage that has the Fedora userland, rather than in the Nix image.
+COPY --from=hoprd-pix /out/bin/hoprd /out/bin/hoprd
+COPY --from=hoprd-pix /out/bin/hoprd-cfg /out/bin/hoprd-cfg
+RUN echo "${HOPRD_SHA256}  /out/bin/hoprd" | sha256sum --check --quiet \
+ && echo "${HOPRD_CFG_SHA256}  /out/bin/hoprd-cfg" | sha256sum --check --quiet
+COPY image/rootfs/usr/libexec/gvpn-exit/gvpn-blocklist-update.sh \
+     image/rootfs/usr/libexec/gvpn-exit/lib.sh /rootfs/usr/libexec/gvpn-exit/
+COPY image/rootfs/usr/share/gvpn-exit/exit.env /rootfs/usr/share/gvpn-exit/
+RUN /build/snapshot-blocklist.sh /rootfs /out/blocklist.cidr
+
+# --- the OS image ---
+FROM ${FEDORA_IOT_IMAGE}
+ARG NETDATA_VERSION
+ARG HOPRD_VERSION
+ARG HOPRD_V4_VERSION
+ARG HOPRD_V4_CFG_SHA256
+ARG FOUNDRY_VERSION
+ARG GVPN_IMAGE_VERSION=dev
+
+COPY keys/netdata-repo.asc /etc/pki/rpm-gpg/RPM-GPG-KEY-netdata
+# netdata's repository is Fedora-release-specific. Its major version comes from
+# the base image, so a Fedora rebase needs no edit here; a wrong path is not
+# silent, dnf fails to fetch the repo's metadata and the build stops.
+#
+# The file is written inside the install RUN and removed in the same RUN, so it
+# exists in no layer. bootc-image-builder depsolves the installer ISO from the
+# image's layers, where a file that a later layer deleted is still visible: a
+# COPY put this one in a layer, it came back at ISO build time, and its file://
+# gpgkey does not resolve outside the image, so every ISO build stopped at
+# "cannot depsolve".
+RUN --mount=type=bind,source=image/build,target=/build \
+    . /etc/os-release \
+ && sed "s/@FEDORA_MAJOR@/${VERSION_ID%%.*}/" /build/netdata.repo > /etc/yum.repos.d/netdata.repo \
+ && dnf -y install --setopt=install_weak_deps=False \
+      wireguard-tools iptables-nft ipset iproute-tc \
+      autossh chrony miniupnpc libnatpmp jq curl skopeo \
+      ethtool procps-ng htop atop \
+      node-exporter \
+      "netdata-${NETDATA_VERSION}" "netdata-plugin-go-${NETDATA_VERSION}" \
+ && dnf -y remove firewalld \
+ && rm -f /etc/yum.repos.d/netdata.repo \
+ && dnf clean all \
+ && rm -rf /var/log/dnf5.log* /var/cache/libdnf5 /var/lib/dnf /run/dnf /var/cache/ldconfig/aux-cache
+
+COPY --from=fetch /out/bin/ /usr/bin/
+COPY --from=fetch /out/libexec/ /usr/libexec/gvpn-exit/
+COPY --from=hoprd-pix /out/curvy-zk/ /usr/share/gvpn-exit/curvy-zk/
+COPY --from=fetch /out/blocklist.cidr /usr/share/gvpn-exit/blocklist.cidr
+COPY image/rootfs/ /
+
+# Fail closed: without this key policy.json rejects every update. The key pair
+# belongs to whoever publishes the updates, so its public half is a build input
+# (`GVPN_COSIGN_PUB`, base64 because a build arg has to be one line) and no key
+# ships with the source: devices must trust a key their operator holds. Create
+# a pair with `cosign generate-key-pair` (docs/publish-image.md).
+ARG GVPN_COSIGN_PUB_B64
+RUN if [ -z "${GVPN_COSIGN_PUB_B64}" ]; then \
+      echo "GVPN_COSIGN_PUB is not set: devices would trust a key nobody holds." >&2; \
+      echo "Create a pair with 'cosign generate-key-pair' and pass its .pub as GVPN_COSIGN_PUB." >&2; \
+      exit 1; \
+    fi \
+ && mkdir -p /etc/pki/containers \
+ && printf '%s' "${GVPN_COSIGN_PUB_B64}" | base64 -d > /etc/pki/containers/gvpn-exit-os.pub \
+ && chmod 0644 /etc/pki/containers/gvpn-exit-os.pub \
+ && test -s /etc/pki/containers/gvpn-exit-os.pub
+
+# cosign takes any file as its --key, so a private key or an SSH key would ship
+# as the update trust root and every device would verify nothing: the decoded
+# build arg has to be a PEM public key. tools/lib.sh:require_public_key is the
+# same check on the host, this one also covers a direct `podman build`. A key
+# pasted into a CI variable carries CRLF line endings or trailing blanks as
+# often as not, so the marker lines are compared without either.
+RUN first="$(grep -m1 -v '^[[:space:]]*$' /etc/pki/containers/gvpn-exit-os.pub | sed 's/[[:space:]]*$//' || true)"; \
+    last="$(grep -v '^[[:space:]]*$' /etc/pki/containers/gvpn-exit-os.pub | tail -n1 | sed 's/[[:space:]]*$//' || true)"; \
+    if [ "${first}" != '-----BEGIN PUBLIC KEY-----' ] \
+      || [ "${last}" != '-----END PUBLIC KEY-----' ] \
+      || grep -q 'PRIVATE KEY' /etc/pki/containers/gvpn-exit-os.pub; then \
+      echo "GVPN_COSIGN_PUB is not a PEM public key (first line: ${first}): devices could not verify any update." >&2; \
+      exit 1; \
+    fi
+
+ARG GVPN_IMAGE_REPO
+RUN --mount=type=bind,source=image/build,target=/build \
+    /build/configure-image.sh /
+
+# git only tracks the executable bit
+RUN chmod 0600 /etc/NetworkManager/system-connections/lan0.nmconnection \
+ && chmod 0440 /etc/sudoers.d/90-gvpn-exit-devops \
+ && visudo -cf /etc/sudoers.d/90-gvpn-exit-devops
+
+# Smoke-test the shipped binaries and validate the hoprd config the way hoprd
+# will see it (placeholders for the per-device values).
+RUN test "$(hoprd --version)" = "hoprd ${HOPRD_VERSION}" \
+ && test "$(hoprd-cfg --version)" = "hoprd ${HOPRD_VERSION}" \
+ && test "$(/usr/libexec/gvpn-exit/hoprd-v4 --version)" = "hoprd ${HOPRD_V4_VERSION}" \
+ && test "$(/usr/libexec/gvpn-exit/hoprd-cfg-v4 --version)" = "hoprd ${HOPRD_V4_VERSION}" \
+ && test "$(cast --version | head -1)" = "cast Version: ${FOUNDRY_VERSION}" \
+ && hopli --version && gnosis_vpn-server --version \
+ && test -f /usr/share/gvpn-exit/curvy-zk/verifyPixAggregation_2_9_30-final.zkey \
+ && touch /tmp/hopr.id \
+ && HOPRD_IDENTITY=/tmp/hopr.id HOPRD_PASSWORD=validate-only \
+    HOPRD_SAFE_ADDRESS=0x0000000000000000000000000000000000000001 \
+    HOPRD_MODULE_ADDRESS=0x0000000000000000000000000000000000000002 \
+    HOPRD_BLOKLI_URL=https://blokli.example.org \
+    CURVY_ZK_KEYS_DIR=/usr/share/gvpn-exit/curvy-zk \
+    sh -ec 'hoprd-cfg --validate-args -- --configurationFilePath /usr/share/gvpn-exit/hoprd.cfg.yaml; \
+      /usr/libexec/gvpn-exit/hoprd-cfg-v4 --validate-args -- --configurationFilePath /usr/share/gvpn-exit/hoprd-v4.cfg.yaml --data /var/lib/hoprd --identity /tmp/hopr.id --api --apiHost 127.0.0.1 --apiPort 3101 --host 127.0.0.1:9191 --safeAddress 0x0000000000000000000000000000000000000001 --moduleAddress 0x0000000000000000000000000000000000000002 --blokliUrl https://blokli.example.org; \
+      HOPRD_HOST=8.8.4.4:9091 HOPRD_ANNOUNCE=1 \
+      hoprd-cfg --validate-args -- --configurationFilePath /usr/share/gvpn-exit/hoprd.cfg.yaml' \
+ && rm -f /tmp/hopr.id
+
+RUN systemctl enable \
+      gvpn-exit-firewall.service \
+      gvpn-exit-loopback-alias.service \
+      hoprd.service gnosisvpn-server.service \
+      gvpn-blocklist-boot.service gvpn-blocklist-refresh.timer \
+      gvpn-exit-netprobe.timer gvpn-exit-heartbeat.timer \
+      hoprd-health.timer hoprd-preventive-restart.timer \
+      node_exporter.service netdata.service \
+      enroll-tunnel.service support-tunnel.service support-tunnel-expire.timer \
+      gvpn-exit-update-stage.timer gvpn-exit-update-apply.timer \
+      sshd.service chronyd.service \
+ && systemctl mask bootc-fetch-apply-updates.timer bootc-fetch-apply-updates.service rpm-ostree-countme.timer fwupd-refresh.timer
+
+LABEL org.opencontainers.image.title="gvpn-exit-os" \
+      org.opencontainers.image.version="${GVPN_IMAGE_VERSION}" \
+      org.opencontainers.image.description="GnosisVPN exit node appliance OS (Fedora IoT bootc)"
+
+RUN bootc container lint --fatal-warnings

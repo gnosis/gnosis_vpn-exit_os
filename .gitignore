@@ -1,0 +1,9 @@
+/output/
+.direnv/
+/ssh_id.pub
+/cosign.key
+# The image-update public key is a build input (`GVPN_COSIGN_PUB`), so an
+# operator may keep it here; never commit a key pair.
+/keys/cosign.pub
+/docs/intro/slides.html
+.env

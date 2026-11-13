@@ -1,0 +1,4 @@
+# Root filesystem default for `bootc install`; the installer ISO's kickstart
+# pins its own layout (image/bib/iso.toml.in).
+[install.filesystem.root]
+type = "xfs"

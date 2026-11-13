@@ -1,0 +1,9 @@
+# bootc-image-builder config for QEMU test disks.
+[[customizations.user]]
+name = "devops"
+key = "@DEVOPS_SSH_KEY@"
+groups = ["wheel"]
+
+[[customizations.filesystem]]
+mountpoint = "/"
+minsize = "20 GiB"

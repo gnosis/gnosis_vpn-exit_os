@@ -1,0 +1,10 @@
+# Rendered to /run/gnosisvpn-server/wggvpn.conf by render-wg-conf.sh on every
+# start of gnosisvpn-server.service. gnosis_vpn-server keeps this [Interface]
+# section as is and appends the [Peer] sections it manages.
+[Interface]
+Address = @WIREGUARD_ADDRESS@
+ListenPort = @WIREGUARD_PORT@
+PrivateKey = @PRIVATE_KEY@
+MTU = @WIREGUARD_MTU@
+PostUp = /usr/libexec/gvpn-exit/wg-hooks.sh up
+PreDown = /usr/libexec/gvpn-exit/wg-hooks.sh down

@@ -1,0 +1,23 @@
+# The wired uplink gets the stable name lan0, which the firewall, NAT and
+# netprobe refer to. Match every wired Ethernet NIC rather than the two drivers
+# the supported models happen to use (r8169 for the SER8's and A8's RTL8125,
+# virtio_net in the QEMU tests): Wi-Fi and Bluetooth drivers are blacklisted, so
+# an appliance presents one wired NIC, and a board revision with a different PHY
+# still gets lan0 instead of losing LAN SSH and NAT.
+#
+# Exactly one wired NIC is assumed. With a second one (a dual-port board, a
+# dock, a USB adapter) udev renames one of them and the other keeps its kernel
+# name, so which NIC carries the LAN is not defined; that configuration is not
+# supported, and gvpn-exit-status names the candidates instead of leaving it to
+# the firewall rules. Narrowing this match to a driver list would trade that
+# for a worse failure, an appliance whose NIC is not in the list and that has
+# no lan0 at all.
+[Match]
+Type=ether
+
+[Link]
+Name=lan0
+WakeOnLan=magic
+# r8169 gives the RTL8125 a single receive queue; spread receive processing
+# (forwarding, NAT, firewall) over all CPUs in software instead.
+ReceivePacketSteeringCPUMask=all

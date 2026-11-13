@@ -1,0 +1,29 @@
+[Unit]
+Description=Time-boxed reverse SSH tunnel to the support bastion
+ConditionPathExists=/var/lib/gvpn-exit/identity/provisioned
+ConditionPathExists=/etc/gvpn-exit/support.env
+Requires=gvpn-exit-firewall.service
+Wants=network-online.target
+After=gvpn-exit-firewall.service network-online.target chronyd.service
+
+[Service]
+EnvironmentFile=/etc/gvpn-exit/support.env
+Environment=AUTOSSH_GATETIME=0
+LoadCredentialEncrypted=support.key:/var/lib/gvpn-exit/creds/support.key.cred
+ExecCondition=/usr/libexec/gvpn-exit/support-window.sh check
+ExecStart=/usr/libexec/gvpn-exit/support-tunnel.sh %d/support.key
+# A reverse forward to local sshd needs no privilege; ssh reads its pinned
+# known_hosts and credential but has no state to write.
+DynamicUser=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+NoNewPrivileges=yes
+SystemCallFilter=@system-service
+CapabilityBoundingSet=
+KillMode=control-group
+Restart=always
+RestartSec=60
+
+[Install]
+WantedBy=multi-user.target

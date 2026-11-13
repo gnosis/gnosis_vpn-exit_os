@@ -1,0 +1,12 @@
+[Unit]
+Description=Stage OS updates hourly
+ConditionPathExists=/var/lib/gvpn-exit/identity/provisioned
+
+[Timer]
+OnCalendar=hourly
+RandomizedDelaySec=1h
+Persistent=true
+Unit=gvpn-exit-update-stage.service
+
+[Install]
+WantedBy=timers.target

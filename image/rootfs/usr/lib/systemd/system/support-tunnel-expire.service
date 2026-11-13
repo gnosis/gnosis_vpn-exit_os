@@ -1,0 +1,7 @@
+[Unit]
+Description=Open or close the support tunnel to match its window
+ConditionPathExists=/var/lib/gvpn-exit/identity/provisioned
+
+[Service]
+Type=oneshot
+ExecStart=/usr/libexec/gvpn-exit/support-window.sh enforce

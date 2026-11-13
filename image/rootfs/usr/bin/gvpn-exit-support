@@ -1,0 +1,58 @@
+#!/usr/bin/env bash
+# Manage the time-boxed support tunnel window (run as root via sudo).
+#
+#   gvpn-exit-support extend <days>   open/extend the window to now + days (1..90)
+#   gvpn-exit-support close           close the window and stop the tunnel
+#   gvpn-exit-support status          print the deadline and tunnel state
+set -euo pipefail
+
+# shellcheck source=SCRIPTDIR/../libexec/gvpn-exit/lib.sh
+source "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/../libexec/gvpn-exit/lib.sh"
+
+SUPPORT_UNTIL="${GVPN_STATE_DIR}/support-until"
+
+extend() {
+  local days="${1:-}" until
+  if [[ ! "${days}" =~ ^[1-9][0-9]*$ ]] || (( days > GVPN_SUPPORT_MAX_DAYS )); then
+    log "days must be an integer between 1 and ${GVPN_SUPPORT_MAX_DAYS}"
+    return 64
+  fi
+  # The window's lock keeps the timer from starting or stopping the tunnel
+  # between this decision and the write.
+  lock_support_window
+  if ! ntp_synchronized; then
+    log "refusing to open a support window while the clock is not NTP-synchronized"
+    return 1
+  fi
+  until="$(date -u -d "@$(( $(now_epoch) + days * 86400 ))" +%Y-%m-%dT%H:%M:%SZ)"
+  echo "${until}" | write_atomic "${SUPPORT_UNTIL}"
+  log "support window open until ${until}"
+  systemctl start support-tunnel.service
+}
+
+# A recovery request a stick left behind would reopen the window at the next
+# synchronized timer run (support-window.sh), so closing cancels it too. The
+# lock makes that atomic against the timer: a request it has already read
+# cannot be turned into a window after this removed the files.
+close() {
+  lock_support_window
+  rm -f "${SUPPORT_UNTIL}" "${GVPN_STATE_DIR}/recovery-request"
+  systemctl stop support-tunnel.service
+  log "support window closed"
+}
+
+status() {
+  if [[ -s "${SUPPORT_UNTIL}" ]]; then
+    echo "support window until $(< "${SUPPORT_UNTIL}")"
+  else
+    echo "support window closed"
+  fi
+  echo "support-tunnel.service: $(systemctl is-active support-tunnel.service || true)"
+}
+
+case "${1:-}" in
+  extend) extend "${2:-}" ;;
+  close) close ;;
+  status) status ;;
+  *) echo "usage: ${0} extend <days>|close|status" >&2; exit 64 ;;
+esac

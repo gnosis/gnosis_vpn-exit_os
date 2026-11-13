@@ -1,0 +1,24 @@
+[Unit]
+Description=Populate GnosisVPN IP blocklist ipset from local cache (boot)
+# Must finish before the VPN server brings up wggvpn, so the blocklist is in
+# effect for the first forwarded packet. Intentionally has NO network dependency:
+# boot population is cache-only and must never delay the VPN coming up. Fresh feed
+# data is handled out-of-band by gvpn-blocklist-refresh.timer.
+Before=gnosisvpn-server.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/libexec/gvpn-exit/gvpn-blocklist-update.sh --from-cache
+# Defense-in-depth: this runs as root and the script handles list data. ipset
+# operates over netlink (no extra caps needed beyond root), so we only need write
+# access to the cache and the node_exporter textfile dir. Paths must match
+# GVPN_BLOCKLIST_CACHE_DIR / GVPN_BLOCKLIST_TEXTFILE_DIR in exit.env.
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ReadWritePaths=/var/lib/gvpn-blocklist /var/lib/node_exporter/textfile
+
+[Install]
+WantedBy=multi-user.target

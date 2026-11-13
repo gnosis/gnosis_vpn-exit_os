@@ -1,0 +1,13 @@
+[Unit]
+Description=Report device state to the fleet backend every 15 minutes
+ConditionPathExists=/var/lib/gvpn-exit/identity/provisioned
+ConditionPathExists=/etc/gvpn-exit/fleet.env
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=15min
+RandomizedDelaySec=60
+Unit=gvpn-exit-heartbeat.service
+
+[Install]
+WantedBy=timers.target

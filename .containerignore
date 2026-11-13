@@ -1,0 +1,4 @@
+# The Containerfile only needs image/ and keys/
+*
+!image/
+!keys/

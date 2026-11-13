@@ -1,0 +1,32 @@
+[Unit]
+Description=Reverse SSH tunnel to the support bastion for first access (unprovisioned only)
+# The installer writes support.env, the pinned bastion host key and the
+# enrollment key. finalize removes the key; from the next boot the device is
+# provisioned and support-tunnel.service takes over with the sealed key.
+ConditionPathExists=!/var/lib/gvpn-exit/identity/provisioned
+ConditionPathExists=/etc/gvpn-exit/support.env
+ConditionPathExists=/etc/gvpn-exit/enroll.key
+Requires=gvpn-exit-firewall.service
+Wants=network-online.target
+After=gvpn-exit-firewall.service network-online.target
+
+[Service]
+EnvironmentFile=/etc/gvpn-exit/support.env
+Environment=AUTOSSH_GATETIME=0
+LoadCredential=enroll.key:/etc/gvpn-exit/enroll.key
+ExecStart=/usr/libexec/gvpn-exit/support-tunnel.sh %d/enroll.key
+# A reverse forward to local sshd needs no privilege; ssh reads its pinned
+# known_hosts and credential but has no state to write.
+DynamicUser=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+NoNewPrivileges=yes
+SystemCallFilter=@system-service
+CapabilityBoundingSet=
+KillMode=control-group
+Restart=always
+RestartSec=60
+
+[Install]
+WantedBy=multi-user.target

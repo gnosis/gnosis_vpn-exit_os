@@ -1,0 +1,18 @@
+[Unit]
+Description=Stage the latest signed OS image (never reboots)
+ConditionPathExists=/var/lib/gvpn-exit/identity/provisioned
+Wants=network-online.target
+After=network-online.target
+ConditionPathExists=/run/ostree-booted
+
+[Service]
+Type=oneshot
+# Skips a digest greenboot rejected on this device before.
+ExecCondition=/usr/libexec/gvpn-exit/update-allowed.sh
+# Signatures are enforced by /etc/containers/policy.json. --download-only
+# keeps the staged deployment from being finalized at shutdown: only
+# update-apply.sh releases it, after the hoprd snapshot. Any other reboot
+# boots the current deployment and this timer stages the update again.
+# The lock is update-apply's: staging never replaces the deployment it is
+# snapshotting for and releasing.
+ExecStart=/usr/bin/flock /run/gvpn-exit/update.lock /usr/bin/bootc upgrade --download-only --quiet

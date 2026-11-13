@@ -1,0 +1,465 @@
+#!/usr/bin/env bash
+# Full system diagnostic of the exit appliance (run as root via sudo; without
+# root the firewall, WireGuard and hoprd process checks show n/a).
+#
+#   gvpn-exit-status
+#
+# Read-only. Prints provisioning, Blokli, firewall, hoprd, WireGuard, capacity,
+# network, reachability, CPU and netdata state. Every check ends in ok, WARN or
+# FAIL; the exit code is 1 when anything FAILs. Blokli, hoprd, WireGuard and
+# capacity are skipped until the device is provisioned because their units are
+# gated on it.
+# Without root the identity directory (root-only) hides the provisioning state:
+# it shows as unknown (WARN) and those sections are skipped too.
+set -euo pipefail
+
+LIBEXEC_DIR="$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/../libexec/gvpn-exit"
+# shellcheck source=SCRIPTDIR/../libexec/gvpn-exit/checks.sh
+source "${LIBEXEC_DIR}/checks.sh"
+# shellcheck source=SCRIPTDIR/../libexec/gvpn-exit/netprobe.sh
+source "${LIBEXEC_DIR}/netprobe.sh"
+# The firewall checks compare the live ruleset with the values the hooks build
+# it from, so the device overrides have to be loaded here too.
+load_exit_env
+
+GVPN_HOPRD_CFG="${GVPN_HOPRD_CFG:-/usr/share/gvpn-exit/hoprd.cfg.yaml}"
+GVPN_PROC_DIR="${GVPN_PROC_DIR:-/proc}"
+HOPRD_HEALTH_URL="${HOPRD_HEALTH_URL:-http://127.0.0.1:3001/healthyz}"
+HOPRD_HOST_ENV="${GVPN_HOPRD_HOST_ENV:-${GVPN_STATE_DIR}/hoprd-host.env}"
+REACHABILITY_FILE="${GVPN_REACHABILITY_FILE:-${GVPN_STATE_DIR}/reachability.json}"
+PROVISIONED_ENV="$(hoprd_env_file || true)"
+CPUFREQ_DIR="${GVPN_CPUFREQ_DIR:-/sys/devices/system/cpu/cpufreq}"
+NETDATA_PORT=19999
+WG_IF=wggvpn
+SHAPING_IFS=(wggvpn ifb-gvpn)
+NEEDS_ROOT="n/a (needs root)"
+
+FAILS=0
+WARNS=0
+PROVISIONING=""
+
+section() {
+  printf '\n== %s ==\n' "$1"
+}
+
+field() {
+  printf '  %-28s %s\n' "$1:" "$2"
+}
+
+# report LABEL ok|WARN|FAIL [DETAIL]
+report() {
+  local label="$1" state="$2" detail="${3:-}"
+  case "${state}" in
+    FAIL) FAILS=$((FAILS + 1)) ;;
+    WARN) WARNS=$((WARNS + 1)) ;;
+  esac
+  field "${label}" "${state}${detail:+ (${detail})}"
+}
+
+# severity_for PROBE
+# WARN or FAIL for a soft probe that did not pass. Hard failures (a unit not
+# active, broken isolation or a missing tunnel-ping allowance, no WireGuard
+# interface) always FAIL and do not go through here. Probes:
+# blokli-unreachable, blokli-mismatch, hoprd-unhealthy,
+# gvpn-server-unreachable, netdata-unreachable, blocklist-small,
+# address-drift, cpu-governor, capacity, wired-nics.
+severity_for() {
+  local probe="$1"
+  # An open decision (docs/roadmap.md): until it is made, a soft probe warns
+  # and never fails the diagnostic.
+  : "${probe}"
+  echo WARN
+}
+
+is_root() {
+  [[ "$(id -u)" == 0 ]]
+}
+
+report_unit() {
+  local unit="$1" state
+  state="$(systemctl is-active "${unit}" 2>/dev/null || true)"
+  if [[ "${state}" == active ]]; then
+    report "${unit}" ok
+  else
+    report "${unit}" FAIL "${state:-unknown}"
+  fi
+}
+
+restarts() {
+  systemctl show -p NRestarts --value "$1" 2>/dev/null || true
+}
+
+# report_probe LABEL PROBE URL: ok when URL answers, else severity_for PROBE.
+report_probe() {
+  local label="$1" probe="$2" url="$3"
+  if curl -fsS --max-time 5 -o /dev/null "${url}" 2>/dev/null; then
+    report "${label}" ok "${url}"
+  else
+    report "${label}" "$(severity_for "${probe}")" "${url} not answering"
+  fi
+}
+
+# provisioned, unprovisioned or unknown: without the right to search the
+# identity directory the marker cannot be seen either way.
+provisioning_state() {
+  if [[ -d "${GVPN_IDENTITY_DIR}" && ! -x "${GVPN_IDENTITY_DIR}" ]]; then
+    echo unknown
+  elif is_provisioned; then
+    echo provisioned
+  else
+    echo unprovisioned
+  fi
+}
+
+# Sections whose units are gated on provisioning run on a provisioned device
+# only; otherwise this prints why the section is skipped and fails.
+provisioned_or_skip() {
+  case "${PROVISIONING}" in
+    provisioned) return 0 ;;
+    unknown) field "status" "skipped (provisioning state unknown, use sudo)" ;;
+    *) field "status" "skipped (unprovisioned)" ;;
+  esac
+  return 1
+}
+
+provisioning_status() {
+  section "Provisioning status"
+  if [[ "${PROVISIONING}" == provisioned ]]; then
+    field "state" "provisioned at $(< "${GVPN_IDENTITY_DIR}/provisioned")"
+  elif [[ "${PROVISIONING}" == unknown ]]; then
+    report "state" WARN "unknown, ${NEEDS_ROOT}"
+  elif [[ -s "${GVPN_IDENTITY_DIR}/node.json" ]]; then
+    field "state" "identity created, not finalized"
+  else
+    field "state" "unprovisioned"
+  fi
+}
+
+provisioning_info() {
+  section "Provisioning info"
+  local record="" label value image digest
+  if [[ "${PROVISIONING}" == provisioned && -s "${GVPN_IDENTITY_DIR}/provisioning.json" ]]; then
+    record="${GVPN_IDENTITY_DIR}/provisioning.json"
+  elif [[ -s "${GVPN_IDENTITY_DIR}/node.json" ]]; then
+    record="${GVPN_IDENTITY_DIR}/node.json"
+  fi
+  if [[ -n "${record}" ]]; then
+    while IFS=$'\t' read -r label value; do
+      field "${label}" "${value}"
+    done < <(jq -r '[
+        ["node address", .node_address], ["peer id", .peer_id],
+        ["wg public key", .wg_public_key], ["safe address", .safe_address],
+        ["module address", .module_address], ["serial", .serial],
+        ["location", .exit.location], ["support port", .support_port],
+        ["provisioned image digest", .image_digest], ["provisioned at", .provisioned_at]
+      ][] | select(.[1] != null) | "\(.[0])\t\(.[1])"' "${record}")
+  elif [[ "${PROVISIONING}" == unknown ]]; then
+    field "record" "${NEEDS_ROOT}"
+  else
+    field "record" "none"
+  fi
+  if is_provisioned && ! hoprd_v5_configured; then
+    field "hoprd v5" "migration pending (hoprd.service held stopped)"
+  fi
+  image="$(bootc_status_json 2>/dev/null | jq -r '.spec.image.image // empty' || true)"
+  digest="$(booted_image_digest 2>/dev/null || true)"
+  field "image" "${image:-unknown}"
+  field "booted digest" "${digest:-unknown}"
+}
+
+# URL hoprd is configured with: the provisioned env file, else the image config.
+configured_blokli_url() {
+  if [[ -r "${PROVISIONED_ENV}" ]]; then
+    sed -n 's/^HOPRD_BLOKLI_URL=//p' "${PROVISIONED_ENV}"
+  else
+    echo "$(image_blokli_url) (image default)"
+  fi
+}
+
+image_blokli_url() {
+  awk '/^blokli_url:/ {print $2; exit}' "${GVPN_HOPRD_CFG}"
+}
+
+# URL the running hoprd process was started with; fails when hoprd is down.
+used_blokli_url() {
+  local pid url
+  pid="$(systemctl show -p MainPID --value hoprd.service 2>/dev/null || true)"
+  [[ -n "${pid}" && "${pid}" != 0 && -r "${GVPN_PROC_DIR}/${pid}/environ" ]] || return 1
+  url="$(tr '\0' '\n' < "${GVPN_PROC_DIR}/${pid}/environ" | sed -n 's/^HOPRD_BLOKLI_URL=//p')"
+  if [[ -n "${url}" ]]; then
+    echo "${url} (hoprd pid ${pid})"
+  else
+    echo "$(image_blokli_url) (image default)"
+  fi
+}
+
+blokli() {
+  section "Blokli"
+  provisioned_or_skip || return 0
+  local configured used=""
+  if [[ ! -e "${PROVISIONED_ENV}" || -r "${PROVISIONED_ENV}" ]]; then
+    configured="$(configured_blokli_url)"
+    field "configured" "${configured}"
+  else
+    field "configured" "${NEEDS_ROOT}"
+  fi
+  if ! is_root; then
+    field "used" "${NEEDS_ROOT}"
+  elif used="$(used_blokli_url)"; then
+    field "used" "${used}"
+    if [[ -n "${configured:-}" && "${used%% (*}" != "${configured%% (*}" ]]; then
+      report "consistency" "$(severity_for blokli-mismatch)" "hoprd runs with a different URL; restart hoprd"
+    fi
+  else
+    field "used" "hoprd not running"
+  fi
+  if [[ -n "${configured:-}" ]]; then
+    if curl -sS --max-time 10 -o /dev/null "${configured%% (*}" 2>/dev/null; then
+      report "reachable" ok
+    else
+      report "reachable" "$(severity_for blokli-unreachable)" "${configured%% (*} unreachable"
+    fi
+  fi
+}
+
+firewall() {
+  section "Firewall"
+  report_unit gvpn-exit-firewall.service
+  if ! is_root; then
+    field "FORWARD isolation" "${NEEDS_ROOT}"
+    field "INPUT isolation" "${NEEDS_ROOT}"
+    field "client tunnel ping" "${NEEDS_ROOT}"
+    field "IPv6 policies" "${NEEDS_ROOT}"
+    field "blocklist" "${NEEDS_ROOT}"
+    return 0
+  fi
+  if iptables -S FORWARD 2>/dev/null | forward_isolation_ok; then
+    report "FORWARD isolation" ok
+  else
+    report "FORWARD isolation" FAIL "${WG_IF} -> GVPN_PRIVATE jump missing or after an ACCEPT"
+  fi
+  if iptables -S INPUT 2>/dev/null | input_isolation_ok; then
+    report "INPUT isolation" ok
+  else
+    report "INPUT isolation" FAIL "${WG_IF} DROP missing, or a rule ahead of it that is not the verification ping"
+  fi
+  # The allowance is installed with wggvpn, which does not exist before
+  # provisioning.
+  if ! is_provisioned; then
+    field "client tunnel ping" "skipped (unprovisioned)"
+  elif iptables -S INPUT 2>/dev/null | input_vpn_ping_ok; then
+    report "client tunnel ping" ok
+  else
+    report "client tunnel ping" FAIL "verification ping to the WireGuard address missing or after the ${WG_IF} DROP"
+  fi
+  if ip6tables -S 2>/dev/null | ip6_policies_drop; then
+    report "IPv6 policies" ok
+  else
+    report "IPv6 policies" FAIL "not all DROP"
+  fi
+  local entries
+  entries="$(ipset list "${GVPN_BLOCKLIST_IPSET_NAME}" 2>/dev/null | awk '/Number of entries/ {print $4}' || true)"
+  if (( ${entries:-0} >= GVPN_BLOCKLIST_MIN_ENTRIES )); then
+    report "blocklist" ok "${entries} entries"
+  else
+    report "blocklist" "$(severity_for blocklist-small)" "${entries:-0} entries, expected >= ${GVPN_BLOCKLIST_MIN_ENTRIES}"
+  fi
+}
+
+hoprd_status() {
+  section "hoprd"
+  provisioned_or_skip || return 0
+  report_unit hoprd.service
+  field "restarts" "$(restarts hoprd.service)"
+  field "version" "$(hoprd --version 2>/dev/null | head -n 1 || true)"
+  report_probe "health" hoprd-unhealthy "${HOPRD_HEALTH_URL}"
+  field "failed probes" "$(cat "${GVPN_RUN_DIR}/hoprd-health.failures" 2>/dev/null || echo 0)"
+}
+
+wireguard() {
+  section "WireGuard"
+  provisioned_or_skip || return 0
+  report_unit gnosisvpn-server.service
+  field "restarts" "$(restarts gnosisvpn-server.service)"
+  report_probe "ping" gvpn-server-unreachable "http://${GVPN_SERVER_ENDPOINT}/api/v1/ping"
+  if ! is_root; then
+    field "${WG_IF}" "${NEEDS_ROOT}"
+  else
+    local port peers
+    port="$(wg show "${WG_IF}" listen-port 2>/dev/null || true)"
+    if [[ -n "${port}" ]]; then
+      report "${WG_IF}" ok "listening on ${port}"
+      peers="$(wg show "${WG_IF}" peers 2>/dev/null | grep -c . || true)"
+      field "peers" "${peers}"
+    else
+      report "${WG_IF}" FAIL "interface down"
+    fi
+  fi
+  local dev
+  for dev in "${SHAPING_IFS[@]}"; do
+    if tc qdisc show dev "${dev}" root 2>/dev/null | grep -q htb; then
+      report "shaping ${dev}" ok
+    else
+      report "shaping ${dev}" FAIL "no htb root qdisc"
+    fi
+  done
+}
+
+# The uplink measurement (capacity.sh) and the shaping knobs lib.sh derives
+# from it. A device without a usable sample runs on the supported-environment
+# floor, which is worth a warning: it serves one client slot.
+capacity() {
+  section "Capacity"
+  provisioned_or_skip || return 0
+  local source
+  case "${GVPN_CAPACITY_SOURCE}" in
+    measured) source="measured ${GVPN_CAPACITY_MEASURED_AT}" ;;
+    pinned) source="pinned in ${GVPN_EXIT_OVERRIDES}" ;;
+    *) source="none (supported-environment floor)" ;;
+  esac
+  field "aggregate" "${GVPN_PEER_SHAPING_AGGREGATE_KBIT} kbit/s"
+  field "peer ceiling" "${GVPN_PEER_CEIL_KBIT} kbit/s"
+  field "peer guarantee" "${GVPN_PEER_GUARANTEE_KBIT} kbit/s"
+  field "peer slots" "${GVPN_PEER_COUNT} (${GVPN_PEER_SUBNET_PREFIX}.${GVPN_PEER_MIN_OCTET}-${GVPN_PEER_SUBNET_PREFIX}.${GVPN_PEER_MAX_OCTET})"
+  field "sample" "${source}"
+  case "${GVPN_CAPACITY_SOURCE}:${GVPN_CAPACITY_ATTEMPT}" in
+    pinned:*)
+      report "uplink" ok "pinned, the measurement is not used" ;;
+    measured:ok)
+      report "uplink" ok "down ${GVPN_CAPACITY_DOWN_KBIT}, up ${GVPN_CAPACITY_UP_KBIT} kbit/s" ;;
+    measured:skipped)
+      # Booted without an uplink; the sample from an earlier boot still holds.
+      report "uplink" ok "probe skipped at ${GVPN_CAPACITY_ATTEMPT_AT}, sample from ${GVPN_CAPACITY_MEASURED_AT}" ;;
+    measured:failed)
+      report "uplink" "$(severity_for capacity)" \
+        "probe failed at ${GVPN_CAPACITY_ATTEMPT_AT}, using the sample from ${GVPN_CAPACITY_MEASURED_AT}" ;;
+    *)
+      report "uplink" "$(severity_for capacity)" "no sample, assuming the supported-environment floor" ;;
+  esac
+}
+
+# Wired NICs, as `10-gvpn-exit-lan0.link` sees them. systemd decides `Type=ether`
+# from udev's device type first (a Wi-Fi card is `wlan`, an LTE modem in
+# Ethernet mode is `wwan`), then from the ARPHRD type with an 802.11 phy
+# counting as wireless. An appliance must also have hardware behind the
+# interface: wggvpn, ifb-gvpn and bridges are ether too but are not candidates
+# for the rename.
+wired_nics() {
+  local nic devtype
+  for nic in "${GVPN_NET_CLASS:-/sys/class/net}"/*; do
+    [[ -r "${nic}/type" && "$(< "${nic}/type")" == 1 && -e "${nic}/device" ]] || continue
+    devtype="$(sed -n 's/^DEVTYPE=//p' "${nic}/uevent" 2>/dev/null)" || devtype=""
+    [[ -z "${devtype}" || "${devtype}" == ether ]] || continue
+    [[ -e "${nic}/wireless" || -e "${nic}/phy80211" ]] && continue
+    echo "${nic##*/}"
+  done
+}
+
+# The LAN uplink. The .link file gives lan0 to the wired NIC, and it matches
+# every wired NIC: on a board with two (a dual-port model, a dock, a USB
+# adapter) udev renames one of them and the other keeps its kernel name, so
+# which NIC carries LAN SSH, NAT and the probes is not defined. That is not
+# supported, and it is worth naming instead of leaving to the firewall rules.
+network() {
+  section "Network"
+  local nics lan
+  mapfile -t nics < <(wired_nics)
+  lan="$(lan_ip 2>/dev/null || true)"
+  field "lan0" "${lan:-no IPv4 address}"
+  case "${#nics[@]}" in
+    1) report "wired NICs" ok "${nics[0]}" ;;
+    0) report "wired NICs" FAIL "none found; lan0 cannot be renamed into place" ;;
+    *) report "wired NICs" "$(severity_for wired-nics)" \
+         "${#nics[@]} candidates: ${nics[*]}; lan0 naming is undefined on a device with more than one" ;;
+  esac
+}
+
+# The announced public address (state/hoprd-host.env, written by
+# gvpn-exit-hoprd-address) next to the observed one (state/reachability.json,
+# written by netprobe.sh). After an ISP address change the announcement is
+# stale, and nothing else on the device reports it.
+reachability() {
+  section "Reachability"
+  local announced="" observed="" nat="" checked=""
+  if [[ -s "${HOPRD_HOST_ENV}" ]]; then
+    announced="$(sed -n 's/^HOPRD_HOST=//p' "${HOPRD_HOST_ENV}")"
+  fi
+  if [[ -s "${REACHABILITY_FILE}" ]]; then
+    observed="$(jq -r '.public_ip // empty' "${REACHABILITY_FILE}" 2>/dev/null || true)"
+    nat="$(jq -r '.nat // empty' "${REACHABILITY_FILE}" 2>/dev/null || true)"
+    checked="$(jq -r '.checked_at // empty' "${REACHABILITY_FILE}" 2>/dev/null || true)"
+  fi
+  if [[ -n "${announced}" ]]; then
+    field "announced" "${announced}"
+  else
+    field "announced" "none (unannounced until discovery succeeds)"
+  fi
+  if [[ -n "${observed}" ]]; then
+    field "observed" "${observed}${checked:+ (checked ${checked})}"
+  else
+    field "observed" "unknown (netprobe has no public answer yet)"
+  fi
+  field "nat" "${nat:-unknown}"
+  if [[ -z "${announced}" || -z "${observed}" ]]; then
+    return 0
+  fi
+  if [[ "${announced%%:*}" == "${observed}" ]]; then
+    report "announced vs observed" ok
+  else
+    report "announced vs observed" "$(severity_for address-drift)" \
+      "the announced address is stale; ${announced%%:*} vs ${observed}, run gvpn-exit-hoprd-address refresh"
+  fi
+}
+
+# Every cpufreq policy should run the performance governor
+# (usr/lib/tmpfiles.d/gvpn-exit-cpu.conf). VMs usually expose no cpufreq.
+cpu() {
+  section "CPU"
+  local policies=("${CPUFREQ_DIR}"/policy*) policy governor off=()
+  if [[ ! -e "${policies[0]}" ]]; then
+    field "governor" "n/a (no cpufreq)"
+    return
+  fi
+  for policy in "${policies[@]}"; do
+    governor="$(< "${policy}/scaling_governor")"
+    [[ "${governor}" == performance ]] || off+=("${governor} on ${policy##*/}")
+  done
+  if (( ${#off[@]} == 0 )); then
+    report "governor" ok "performance on ${#policies[@]} policies"
+  else
+    report "governor" "$(severity_for cpu-governor)" "$(IFS=,; echo "${off[*]}")"
+  fi
+  field "energy preference" "$(cat "${policies[0]}/energy_performance_preference" 2>/dev/null || echo n/a)"
+}
+
+netdata() {
+  section "netdata"
+  report_unit netdata.service
+  report_probe "api" netdata-unreachable "http://127.0.0.1:${NETDATA_PORT}/api/v1/info"
+  local lan
+  lan="$(lan_ip 2>/dev/null || true)"
+  field "dashboard" "ssh -L ${NETDATA_PORT}:127.0.0.1:${NETDATA_PORT} ${SUDO_USER:-devops}@${lan:-<device-ip>}, then http://127.0.0.1:${NETDATA_PORT}"
+}
+
+main() {
+  is_root || echo "not running as root: some checks show n/a (use sudo)"
+  PROVISIONING="$(provisioning_state)"
+  provisioning_status
+  provisioning_info
+  blokli
+  firewall
+  hoprd_status
+  wireguard
+  capacity
+  network
+  reachability
+  cpu
+  netdata
+  echo
+  echo "summary: ${FAILS} FAIL, ${WARNS} WARN"
+  (( FAILS == 0 ))
+}
+
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+  main "$@"
+fi
