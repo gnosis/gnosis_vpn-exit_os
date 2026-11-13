@@ -149,7 +149,7 @@ RUN test "$(hoprd --version)" = "hoprd ${HOPRD_VERSION/-pr./+pr.}" \
  && test "$(/usr/libexec/gvpn-exit/hoprd-cfg-v4 --version)" = "hoprd ${HOPRD_V4_VERSION}" \
  && test "$(cast --version | head -1)" = "cast Version: ${FOUNDRY_VERSION}" \
  && hopli --version && gnosis_vpn-server --version \
- && test -f /usr/share/gvpn-exit/curvy-zk/verifyPixAggregation_2_9_30-final.zkey \
+ && test -f /usr/share/gvpn-exit/curvy-zk/verifyPixAggregationBound_2_9_30-final.zkey \
  && touch /tmp/hopr.id \
  && HOPRD_IDENTITY=/tmp/hopr.id HOPRD_PASSWORD=validate-only \
     HOPRD_SAFE_ADDRESS=0x0000000000000000000000000000000000000001 \
