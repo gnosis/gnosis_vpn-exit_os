@@ -1,8 +1,8 @@
 # Developer onboarding deck
 
-[`slides.md`](slides.md) is a [Marp](https://marp.app) deck that introduces
-new developers to ExitOS: what the appliance does, how the repository is laid
-out, the dev loop, the runtime design and how changes ship. It summarises
+[`slides.md`](slides.md) is a [Marp](https://marp.app) deck that introduces new
+developers to ExitOS: what the appliance does, how the repository is laid out,
+the dev loop, the runtime design and how changes ship. It summarises
 [architecture.md](../architecture.md), [build.md](../build.md) and
 [roadmap.md](../roadmap.md); when those change, update the deck with them.
 

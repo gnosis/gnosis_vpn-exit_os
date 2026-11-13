@@ -2,11 +2,11 @@
 
 ## Supported versions
 
-This project is under development. Security fixes target the latest code on
-the default branch; older revisions and deployed images have no guaranteed
-security maintenance. Publication does not imply production readiness. See
-the [roadmap](docs/roadmap.md) and [acceptance gate](docs/first-install.md#7-acceptance-gate)
-for acceptance gaps.
+This project is under development. Security fixes target the latest code on the
+default branch; older revisions and deployed images have no guaranteed security
+maintenance. Publication does not imply production readiness. See the
+[roadmap](docs/roadmap.md) and
+[acceptance gate](docs/first-install.md#7-acceptance-gate) for acceptance gaps.
 
 ## Reporting a vulnerability
 
@@ -26,10 +26,10 @@ redact credentials, device identities and operator information. Do not attach
 private keys, enrollment ISOs or unredacted device logs.
 
 Test only systems you own or are explicitly authorized to assess. Coordinate
-public disclosure with the maintainers after remediation. Response times are
-not guaranteed.
+public disclosure with the maintainers after remediation. Response times are not
+guaranteed.
 
 The support bastion and upstream dependencies are maintained outside this
-repository. Report vulnerabilities specific to those systems to their
-respective maintainers through private reporting channels. The fleet backend
-is not implemented, part of the [roadmap](docs/roadmap.md#fleet-and-onboarding).
+repository. Report vulnerabilities specific to those systems to their respective
+maintainers through private reporting channels. The fleet backend is not
+implemented, part of the [roadmap](docs/roadmap.md#fleet-and-onboarding).

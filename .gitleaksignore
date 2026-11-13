@@ -1,0 +1,6 @@
+# gitleaks findings that are test fixtures, not secrets (the pre-push hook in
+# flake.nix reads this file).
+# The PEM private-key markers, with no key between them, that publish has to refuse.
+370ab09893fbb618ba1255c7a71a4f33d8a4459b:tests/unit/publish.bats:private-key:168
+# A dummy WireGuard key: base64 of "hello world this is 32 bytes key".
+370ab09893fbb618ba1255c7a71a4f33d8a4459b:tests/unit/render-wg-conf.bats:generic-api-key:7

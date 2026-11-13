@@ -5,29 +5,28 @@ A bastion is for devices that are administered remotely
 only works on it from its LAN needs none: build its installer without the
 bastion inputs and read [local access](local-access.md) instead.
 
-The device dials out; nothing on the appliance network has to accept an
-inbound connection. Each appliance keeps a reverse SSH tunnel to a bastion you
-operate, and the bastion's loopback then has one port per device that forwards
-to that device's sshd ([why it looks like
-this](architecture.md#support-tunnel)).
+The device dials out; nothing on the appliance network has to accept an inbound
+connection. Each appliance keeps a reverse SSH tunnel to a bastion you operate,
+and the bastion's loopback then has one port per device that forwards to that
+device's sshd ([why it looks like this](architecture.md#support-tunnel)).
 
 This page is the minimum a bastion has to be. It is infrastructure of your own:
-any host with `sshd` that you can reach from the device and from your
-operators will do. The repository contains no bastion code; the throwaway one
-the integration tests use (`tests/integration/bastion.sh`) is a rehearsal of
-what follows.
+any host with `sshd` that you can reach from the device and from your operators
+will do. The repository contains no bastion code; the throwaway one the
+integration tests use (`tests/integration/bastion.sh`) is a rehearsal of what
+follows.
 
 ## What the device needs from you
 
-For every appliance, before you build its installer ([first
-install](first-install.md#1-prepare-the-bastion)):
+For every appliance, before you build its installer
+([first install](first-install.md#1-prepare-the-bastion)):
 
-| Input | What it is |
-|---|---|
-| `GVPN_BASTION` | `user@host`, or `ssh://user@host:port` for a non-default SSH port. The account is the one the device's key logs in as. |
-| `GVPN_SUPPORT_PORT` | A port on the bastion's loopback that belongs to this device only, 1024-65535. |
-| `GVPN_ENROLL_KEY` | The private half of a key pair you generate for this device's first access. The ISO carries it. |
-| `GVPN_BASTION_KNOWN_HOSTS` | The bastion's host key in `known_hosts` form, so the device pins it. |
+| Input                      | What it is                                                                                                             |
+| -------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| `GVPN_BASTION`             | `user@host`, or `ssh://user@host:port` for a non-default SSH port. The account is the one the device's key logs in as. |
+| `GVPN_SUPPORT_PORT`        | A port on the bastion's loopback that belongs to this device only, 1024-65535.                                         |
+| `GVPN_ENROLL_KEY`          | The private half of a key pair you generate for this device's first access. The ISO carries it.                        |
+| `GVPN_BASTION_KNOWN_HOSTS` | The bastion's host key in `known_hosts` form, so the device pins it.                                                   |
 
 The device authenticates with a key and asks for one reverse forward:
 `-R <port>:127.0.0.1:22`, which `sshd` resolves to `localhost:<port>`. It never
@@ -35,9 +34,9 @@ executes a command on the bastion.
 
 ## A minimal bastion
 
-One unprivileged account, a dedicated `sshd`, and one `authorized_keys` line
-per device. Run it as a second `sshd` instance so it cannot change the host's
-own SSH policy:
+One unprivileged account, a dedicated `sshd`, and one `authorized_keys` line per
+device. Run it as a second `sshd` instance so it cannot change the host's own
+SSH policy:
 
 ```sh
 # /etc/ssh/sshd_gvpn_bastion_config
@@ -59,8 +58,8 @@ ClientAliveInterval 30
 ClientAliveCountMax 3
 ```
 
-- `ClientAliveInterval` and `ClientAliveCountMax` drop a session within about
-  90 seconds once its device stops answering. Without them, a device that loses
+- `ClientAliveInterval` and `ClientAliveCountMax` drop a session within about 90
+  seconds once its device stops answering. Without them, a device that loses
   power or its uplink leaves a session that holds its reverse port for hours
   (until TCP keepalive gives up), and the device cannot bind that port again
   when it comes back. sshd checks only a session that has been idle for the
@@ -72,20 +71,19 @@ ClientAliveCountMax 3
   operator reaches a device through this sshd (`ssh -J`, or `-L` when the jump
   host cannot resolve `127.0.0.1` where you expect). What a key may forward is
   then narrowed per key, below.
-- The account needs no shell, no home directory beyond its key file and no
-  sudo.
+- The account needs no shell, no home directory beyond its key file and no sudo.
 
-Each device key carries its own restriction, so a compromised device cannot
-open another device's port, run a command in the account or reach the
-bastion's own network:
+Each device key carries its own restriction, so a compromised device cannot open
+another device's port, run a command in the account or reach the bastion's own
+network:
 
 ```text
 restrict,port-forwarding,permitopen="localhost:1",permitlisten="localhost:22001",command="false" ssh-ed25519 AAAA... gvpn-exit-enroll-SERIAL
 ```
 
 - `restrict` switches every permission off: shell, pty, agent, X11 and all
-  forwarding. `port-forwarding` switches forwarding back on, because the
-  device needs the reverse direction.
+  forwarding. `port-forwarding` switches forwarding back on, because the device
+  needs the reverse direction.
 - `permitlisten` names the one port the key may bind, and it must say
   `localhost`, not `127.0.0.1`, because that is what `ssh -R` without a bind
   address asks for.
@@ -99,8 +97,8 @@ A typo in any of these makes `sshd` ignore the whole key ("bad key options" in
 its log), and the device then has no remote path at all. Check the file with
 `sshd -t -f <config>` and watch the log the first time a device connects.
 
-Start it with `sshd -f /etc/ssh/sshd_gvpn_bastion_config` (systemd unit, or
-`-D` under your supervisor), and give its host key to the ISO as
+Start it with `sshd -f /etc/ssh/sshd_gvpn_bastion_config` (systemd unit, or `-D`
+under your supervisor), and give its host key to the ISO as
 `GVPN_BASTION_KNOWN_HOSTS`:
 
 ```sh
@@ -111,14 +109,16 @@ printf '[bastion.example.org]:2222 %s\n' \
 ## Onboarding one device
 
 1. Pick the next free port and write it in your device register.
-2. Generate the enrollment pair: `ssh-keygen -q -t ed25519 -N '' -C
-   gvpn-exit-enroll-<serial> -f <serial>.enroll`. Keep the private key in a
-   safe place only long enough to build the ISO; the ISO itself carries it.
-3. Add the line above with the public key and the device's port to the
-   account's `authorized_keys`.
-4. Add the operator keys that will reach this device ([operators'
-   keys](#operators-keys)). Without them the device is reachable only through
-   the enrollment key that `finalize` deletes.
+2. Generate the enrollment pair:
+   `ssh-keygen -q -t ed25519 -N '' -C
+   gvpn-exit-enroll-<serial> -f <serial>.enroll`.
+   Keep the private key in a safe place only long enough to build the ISO; the
+   ISO itself carries it.
+3. Add the line above with the public key and the device's port to the account's
+   `authorized_keys`.
+4. Add the operator keys that will reach this device
+   ([operators' keys](#operators-keys)). Without them the device is reachable
+   only through the enrollment key that `finalize` deletes.
 5. Build the ISO with that private key, the port, the bastion address and the
    known_hosts file ([first install](first-install.md#build-it-locally)).
 
@@ -156,15 +156,15 @@ that report you can restore the device's `authorized_keys` line on the bastion:
 restrict,port-forwarding,permitopen="localhost:1",permitlisten="localhost:<port>",command="false" <support public key>
 ```
 
-Then connect as above, install the permanent operator keys, and close the
-window when the work is done. Keep the device register in version control: it
-is your record of which key may bind which port.
+Then connect as above, install the permanent operator keys, and close the window
+when the work is done. Keep the device register in version control: it is your
+record of which key may bind which port.
 
 ## Operators' keys
 
-Operators log in with their own keys, one line per person and device port.
-Like a device key, an operator key gets no shell and no PTY; unlike a device
-key, it may forward to the one port it is for, and it may bind no port at all:
+Operators log in with their own keys, one line per person and device port. Like
+a device key, an operator key gets no shell and no PTY; unlike a device key, it
+may forward to the one port it is for, and it may bind no port at all:
 
 ```text
 restrict,port-forwarding,permitopen="localhost:22001",permitlisten="localhost:1" ssh-ed25519 AAAA... ops@laptop
@@ -188,7 +188,7 @@ OpenSSH has no keyword that allows local forwarding alone.
 
 `tests/integration/bastion.sh start` brings up a throwing-away `sshd` on the
 host's loopback (port 2200): a per-device key with the same `permitlisten` and
-`permitopen` restriction as above, on a much looser server configuration
-(your own user, `StrictModes no`, no separate account). `bastion.sh env` prints
-the four inputs for `just iso`. It is what the QEMU walkthrough in
+`permitopen` restriction as above, on a much looser server configuration (your
+own user, `StrictModes no`, no separate account). `bastion.sh env` prints the
+four inputs for `just iso`. It is what the QEMU walkthrough in
 [build.md](build.md#first-install-rehearsal) uses.
