@@ -135,6 +135,8 @@ teardown() {
   # The signature is on the checksum file, which covers the ISO and both
   # sidecars: nothing a puller trusts is outside it.
   grep -q '^cosign sign-blob .*--bundle .*install.iso.sha256.sigstore.json .*/install.iso.sha256$' "${MOCK_LOG}"
+  # The signing config the real-cosign test below checks: no transparency log.
+  grep -q "^cosign sign-blob .*--signing-config ${REPO_ROOT}/tools/cosign-signing-config.json " "${MOCK_LOG}"
   grep -q "^cosign verify-blob --key ${GVPN_COSIGN_PUB} --bundle .*install.iso.sha256.sigstore.json .*/install.iso.sha256\$" "${MOCK_LOG}"
   [ "$(awk '{ print $2 }' "${SANDBOX}/pushed.sha256" | sort | tr '\n' ' ')" = "install.iso install.iso.target install.iso.version " ]
   grep -qx "$(sha256sum "${GVPN_ISO}" | cut -d' ' -f1)  install.iso" "${SANDBOX}/pushed.sha256"
@@ -311,6 +313,8 @@ esac'
 }
 
 @test "cosign 3 accepts the sign-blob invocation the publisher uses" {
+  # setup() put a recording cosign on PATH; this test needs the real one.
+  rm "${MOCK_BIN}/cosign"
   command -v cosign >/dev/null || skip "cosign is not on PATH"
   export COSIGN_PASSWORD=""
   local keydir="${SANDBOX}/realkeys" blob="${SANDBOX}/realblob"
@@ -319,9 +323,13 @@ esac'
   run cosign generate-key-pair --output-key-prefix "${keydir}/cosign"
   [ "${status}" -eq 0 ]
   run cosign sign-blob --yes --key "${keydir}/cosign.key" \
-    --use-signing-config=false --tlog-upload=false \
+    --signing-config "${REPO_ROOT}/tools/cosign-signing-config.json" \
     --bundle "${keydir}/blob.sigstore.json" "${blob}"
+  echo "${output}"
   [ "${status}" -eq 0 ]
+  [[ "${output}" != *deprecated* ]]
+  # Nothing went to a transparency log or a timestamp authority.
+  [ "$(jq -c '.verificationMaterial | keys' "${keydir}/blob.sigstore.json")" = '["publicKey"]' ]
   run cosign verify-blob --key "${keydir}/cosign.pub" \
     --bundle "${keydir}/blob.sigstore.json" --insecure-ignore-tlog=true "${blob}"
   [ "${status}" -eq 0 ]

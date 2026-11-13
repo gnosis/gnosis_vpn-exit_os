@@ -230,9 +230,10 @@ publish() {
   ( cd "${iso_dir}" && sha256sum "${iso_name}" "${iso_name}.version" "${iso_name}.target" > "${iso_name}.sha256" )
   # cosign 3.x writes the signature and verification material as one bundle.
   # A local key with no transparency log matches the image's skopeo signature
-  # policy: the device trusts the key, not Rekor.
+  # policy: the device trusts the key, not Rekor. The signing config lists no
+  # transparency log and no timestamp authority, so nothing leaves this host.
   cosign sign-blob --yes --key "${GVPN_COSIGN_KEY}" \
-    --use-signing-config=false --tlog-upload=false \
+    --signing-config "${REPO_ROOT}/tools/cosign-signing-config.json" \
     --bundle "${BUNDLE}" "${SHA256}" >/dev/null
   cosign verify-blob --key "${GVPN_COSIGN_PUB}" --bundle "${BUNDLE}" \
     --insecure-ignore-tlog=true "${SHA256}" >/dev/null \
