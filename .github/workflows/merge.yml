@@ -149,6 +149,37 @@ jobs:
       - name: Run just push (push image without channel tag)
         run: nix develop -c just push
 
+      # What was published, read back from the registry rather than from the
+      # push logs, on the run's summary page.
+      - name: Summarize the release
+        run: |
+          iso_dir=output/iso/bootiso
+          version="$(< "${iso_dir}/install.iso.version")"
+          iso_repo="${GVPN_ISO_REPO:-${GVPN_IMAGE_REPO}}"
+          image_digest="$(nix develop -c skopeo inspect --no-tags --format '{{.Digest}}' "docker://${GVPN_IMAGE_REPO}:${version}")"
+          iso_digest="$(nix develop -c oras manifest fetch --descriptor "${iso_repo}:iso-${version}" | jq -r .digest)"
+          iso_size="$(numfmt --to=iec --suffix=B "$(stat -c %s "${iso_dir}/install.iso")")"
+          embedded="$(sed -n 's/^image=//p' "${iso_dir}/install.iso.target")"
+          target="$(grep -E '^(disk|enrollment|access)=' "${iso_dir}/install.iso.target" | paste -sd' ')"
+          key_sha256="$(openssl pkey -pubin -in "${GVPN_COSIGN_PUB}" -outform DER | sha256sum | cut -d' ' -f1)"
+          {
+            echo "## Published \`${version}\`"
+            echo
+            echo "| | Reference | Digest |"
+            echo "| --- | --- | --- |"
+            echo "| Image | \`${GVPN_IMAGE_REPO}:${version}\` | \`${image_digest}\` |"
+            echo "| Installer ISO | \`${iso_repo}:iso-${version}\` | \`${iso_digest}\` |"
+            echo
+            echo "Both are signed with the image-update key, SHA-256 fingerprint \`${key_sha256}\`; compare it with the key you verify against: \`openssl pkey -pubin -in cosign.pub -outform DER | sha256sum\`."
+            echo
+            echo "The ISO is ${iso_size}, \`${target}\`, and embeds the image with ID \`${embedded}\`."
+            echo "No channel tag moved: devices on \`canary\` do not see this build yet."
+            echo
+            echo "Pull and verify the ISO: \`GVPN_ISO_REPO=${iso_repo} GVPN_COSIGN_PUB=<update key .pub> just pull-iso ${version}\`, or with curl ([first install](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/blob/${GITHUB_SHA}/docs/first-install.md#pull-the-published-iso))."
+            echo
+            echo "Promote: run **Promote Image** with version \`${version}\` and channel \`canary\`, then \`just tag-iso ${version}\` to move \`iso-canary\`."
+          } >> "${GITHUB_STEP_SUMMARY}"
+
       - name: Cleanup signing keys
         if: always()
         run: rm -rf "${RUNNER_TEMP}/keys"
