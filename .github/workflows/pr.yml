@@ -90,6 +90,16 @@ jobs:
       - name: Let Podman use overlay's native diff
         run: echo N | sudo tee /sys/module/overlay/parameters/redirect_dir
 
+      # Ubuntu 26.04 loads AppArmor's bwrap-userns-restrict profile, which runs
+      # everything bubblewrap starts without capabilities. osbuild runs each
+      # bootc-image-builder stage through bubblewrap, and those stages mount
+      # /dev and chown files as root. The runner is discarded after the job.
+      - name: Let osbuild's bubblewrap stages keep their capabilities
+        run: |
+          if [ -f /etc/apparmor.d/bwrap-userns-restrict ]; then
+            sudo apparmor_parser -R /etc/apparmor.d/bwrap-userns-restrict
+          fi
+
       - name: Run just build
         run: nix develop -c just build
 
