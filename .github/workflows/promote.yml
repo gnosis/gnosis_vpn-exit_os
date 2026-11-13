@@ -27,7 +27,7 @@ env:
 jobs:
   promote:
     name: Promote
-    runs-on: depot-ubuntu-22.04-4
+    runs-on: ubuntu-26.04
     # id-token lets the job ask GitHub for the OIDC token that Google Cloud
     # exchanges for registry access.
     permissions:
