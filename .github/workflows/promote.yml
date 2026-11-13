@@ -27,7 +27,7 @@ env:
 jobs:
   promote:
     name: Promote
-    runs-on: depot-ubuntu-24.04-4
+    runs-on: depot-ubuntu-22.04-4
     # The registry credentials are environment secrets: an environment can
     # restrict them to a branch and require reviewers, which a repository
     # secret cannot.
