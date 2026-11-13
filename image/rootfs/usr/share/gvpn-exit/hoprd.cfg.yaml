@@ -16,6 +16,7 @@ hopr:
   # together. Announcement does not establish NAT or firewall reachability.
   announce: false
   network:
+    probe_interval: 30s # hopr-ct-full-network 0.11 caps it at 30s; hoprd default 60s fails startup
     pix:
       num_ssa_parts: 4096
       ssa_part_size: 32
@@ -88,6 +89,7 @@ strategy:
           spend_window: 1day
           deposit_buffer_period: 500ms
           withdrawal_buffer_period: 500ms
+          pix_recovery_password_env: HOPRD_PASSWORD
         pool:
           blokli_url: https://blokli.example.org
           submission: relayer

@@ -141,9 +141,10 @@ RUN chmod 0600 /etc/NetworkManager/system-connections/lan0.nmconnection \
  && visudo -cf /etc/sudoers.d/90-gvpn-exit-devops
 
 # Smoke-test the shipped binaries and validate the hoprd config the way hoprd
-# will see it (placeholders for the per-device values).
-RUN test "$(hoprd --version)" = "hoprd ${HOPRD_VERSION}" \
- && test "$(hoprd-cfg --version)" = "hoprd ${HOPRD_VERSION}" \
+# will see it (placeholders for the per-device values). An OCI tag cannot carry
+# a `+`, so a hoprd PR build tagged 5.0.3-pr.261 reports itself as 5.0.3+pr.261.
+RUN test "$(hoprd --version)" = "hoprd ${HOPRD_VERSION/-pr./+pr.}" \
+ && test "$(hoprd-cfg --version)" = "hoprd ${HOPRD_VERSION/-pr./+pr.}" \
  && test "$(/usr/libexec/gvpn-exit/hoprd-v4 --version)" = "hoprd ${HOPRD_V4_VERSION}" \
  && test "$(/usr/libexec/gvpn-exit/hoprd-cfg-v4 --version)" = "hoprd ${HOPRD_V4_VERSION}" \
  && test "$(cast --version | head -1)" = "cast Version: ${FOUNDRY_VERSION}" \

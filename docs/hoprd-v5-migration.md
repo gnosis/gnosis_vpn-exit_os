@@ -1,9 +1,9 @@
 # Migrate a device from hoprd v4 to v5
 
-The image runs hoprd 5.0.2 on every device. A device that was provisioned on
-hoprd v4 keeps its old database and its sealed identity, so it still boots after
-the update, but its v4 channels and its old Safe need one manual cleanup before
-v5 uses the new Safe.
+The image runs hoprd 5.0.3-pr.261 on every device. A device that was provisioned
+on hoprd v4 keeps its old database and its sealed identity, so it still boots
+after the update, but its v4 channels and its old Safe need one manual cleanup
+before v5 uses the new Safe.
 
 The v5 service stays stopped until
 `/etc/hoprd-v5/hoprd.env.d/10-provisioned.env` exists, so its strategies cannot
