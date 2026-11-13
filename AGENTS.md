@@ -83,13 +83,14 @@ the VM harness needs x86_64 Linux with KVM (`cpu.bats` skips on Darwin because
   remaining steps ([runbook](docs/incus.md)). The VM is a production alternative
   to hardware (min. 8 vCPUs, 16 GiB RAM).
 - `just pull-iso REF` - pull the published ISO into `output/published-iso/` and
-  verify it against `GVPN_COSIGN_PUB`. The ISO lives in `GVPN_ISO_REPO`, or next
-  to the image in `GVPN_IMAGE_REPO` when that is not set. CI builds it from the
-  image and publishes it as a signed OCI artifact (`iso-<version>`) before it
-  pushes the image: unmanaged, console-configured with no SSH key, install disk
-  picked at install time. `just incus-install-published REF` pulls and installs
-  it in one step, `just publish-iso` / `just push-iso` publish it by hand, and
-  `just tag-iso VERSION` moves `iso-canary` after a promotion.
+  verify it against `GVPN_COSIGN_PUB`. The ISO lives in its own repository,
+  `GVPN_ISO_REPO` (required, never the same as `GVPN_IMAGE_REPO`), under the
+  same `<version>` and `canary` tags as the image. CI builds it from the image
+  and publishes it as a signed OCI artifact before it pushes the image:
+  unmanaged, console-configured with no SSH key, install disk picked at install
+  time. `just incus-install-published REF` pulls and installs it in one step,
+  `just publish-iso` / `just push-iso` publish it by hand, and
+  `just tag-iso VERSION` moves the ISO repository's `canary` after a promotion.
 - `just test-integration unprovisioned|enroll|provision|provisioned|address|update` -
   checks against the running VM over SSH (`VM_SSH_KEY` selects the key). The VM
   ISO is built against the throwaway bastion `tests/integration/bastion.sh`.

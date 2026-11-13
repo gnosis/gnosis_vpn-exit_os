@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Publish the installer ISO next to the image it installs: a signed OCI
-# artifact in the same registry repository, under iso-<version> and, unless
-# --no-channel is given, the iso-canary channel tag. The one published ISO
+# Publish the installer ISO for the image it installs: a signed OCI artifact
+# in a repository of its own (GVPN_ISO_REPO), under the image's version and,
+# unless --no-channel is given, the canary channel tag. The one published ISO
 # installs both targets, hardware from a USB stick or an Incus VM: it detects
 # its install disk (disk=auto), carries no bastion enrollment and no SSH key,
 # and is configured on the console.
@@ -20,12 +20,12 @@
 # one build: an already published version is left alone when it embeds the
 # image of the local ISO, and refused when it embeds another build, so a CI
 # rerun that rebuilt the image stops before it pushes that image.
-# --tag-only moves iso-canary to a version that is already published,
+# --tag-only moves canary to a version that is already published,
 # without rebuilding or re-signing it, after pulling that version and
 # verifying it against GVPN_COSIGN_PUB.
 #
-#   GVPN_ISO_REPO                registry repository of the ISO (default:
-#                                GVPN_IMAGE_REPO; one of the two is required)
+#   GVPN_ISO_REPO                registry repository of the ISO, required, and
+#                                not GVPN_IMAGE_REPO
 #   GVPN_ISO                     ISO path (default: output/iso/bootiso/install.iso)
 #   GVPN_COSIGN_KEY              private key (default: cosign.key at repo root)
 #   GVPN_COSIGN_PUB              public half (default: keys/cosign.pub)
@@ -86,7 +86,7 @@ remote_digest() {
 }
 
 tag_published() {
-  remote_digest "${REPO}:iso-$1" >/dev/null
+  remote_digest "${REPO}:$1" >/dev/null
 }
 
 resolved_version() {
@@ -160,8 +160,8 @@ publish() {
   fi
   [[ "${version}" =~ ${VERSION_RE} ]] || die "unusable ISO version '${version}'"
   [[ "${version}" != *-dirty ]] || die "the ISO was built from uncommitted source (${version}); commit and rebuild it before publishing"
-  tag="iso-${version}"
-  channel_tag="iso-${CHANNEL}"
+  tag="${version}"
+  channel_tag="${CHANNEL}"
   (( ${#tag} <= 128 && ${#channel_tag} <= 128 )) || die "version '${version}' makes an OCI tag longer than 128 characters"
 
   if (( TAG_ONLY )); then

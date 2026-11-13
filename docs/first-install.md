@@ -182,29 +182,29 @@ tracks `<GVPN_IMAGE_REPO>:canary` unless built with `channel=stable`.
 _Unmanaged only._
 
 CI builds the installer on every merge to `main` and publishes it as a signed
-OCI artifact next to the image, or in the repository `GVPN_ISO_REPO` names when
-the operator keeps installers apart, under the immutable tag `iso-<version>`;
-the channel tag `iso-canary` moves after the matching image was promoted
+OCI artifact in a repository of its own (`GVPN_ISO_REPO`), under the image's
+immutable `<version>` tag; the ISO repository's `canary` moves after the
+matching image was promoted
 ([publishing](publish-image.md#publish-the-installer-iso)). It is one ISO for
 both targets: unmanaged, console-configured and with the install disk picked at
 install time. A device installed from it tracks `<GVPN_IMAGE_REPO>:canary` and
-follows that tag wherever it points: there is no minimum-version floor. An
-`iso-<version>` that is newer than `canary`, which every merge build is until it
-is promoted, installs a device that then updates to the older canary image, a
+follows that tag wherever it points: there is no minimum-version floor. An ISO
+`<version>` that is newer than `canary`, which every merge build is until it is
+promoted, installs a device that then updates to the older canary image, a
 downgrade. Install the promoted ISO (`canary`, or the version `canary` points
 at) unless you mean to test an unpromoted build.
 
 ```sh
 export GVPN_IMAGE_REPO='registry.example.org/fleet/gvpn-exit-os'
-# export GVPN_ISO_REPO='registry.example.org/fleet/gvpn-exit-os-iso'  # only if the ISO has its own repository
+export GVPN_ISO_REPO='registry.example.org/fleet/gvpn-exit-os-iso'
 export GVPN_COSIGN_PUB='/secure/path/cosign.pub'
 nix develop -c just pull-iso VERSION    # or canary
 ```
 
 Replace `VERSION` with the version printed by the merge build; use `canary` once
-`iso-canary` was moved to it. `pull-iso` downloads with `oras` into
-`output/published-iso/`, verifies the signature against `GVPN_COSIGN_PUB` and
-the checksums of the ISO, its version and its target, and prints the path of
+the ISO repository's `canary` was moved to it. `pull-iso` downloads with `oras`
+into `output/published-iso/`, verifies the signature against `GVPN_COSIGN_PUB`
+and the checksums of the ISO, its version and its target, and prints the path of
 `install.iso`. A version is checked against the signed version of the artifact;
 `canary` is whatever signed ISO the tag points at. The registry must allow
 anonymous pulls (as it does for image updates) or accept your registry login.
@@ -218,8 +218,8 @@ serve anonymous pulls without a token, as Google Artifact Registry does for a
 public repository.
 
 ```sh
-REPO='registry.example.org/fleet/gvpn-exit-os'   # GVPN_ISO_REPO, or GVPN_IMAGE_REPO
-TAG='iso-VERSION'                                # or iso-canary
+REPO='registry.example.org/fleet/gvpn-exit-os-iso'  # GVPN_ISO_REPO
+TAG='VERSION'                                       # or canary
 H="https://${REPO%%/*}" N="${REPO#*/}"
 curl -fsS -H 'Accept: application/vnd.oci.image.manifest.v1+json' \
   "${H}/v2/${N}/manifests/${TAG}" > manifest.json

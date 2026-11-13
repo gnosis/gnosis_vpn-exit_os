@@ -483,8 +483,9 @@ just promote <version> canary   ──► soak ──►   just promote <version
 
 - Versions are `git describe --tags --always --dirty` (short hashes today).
 - Merge also builds the installer ISO (unmanaged, console-configured, for
-  hardware and VMs) and publishes it signed as `iso-<version>`; its canary tag
-  moves with `tag-iso` after image promotion. PRs build it but publish nothing.
+  hardware and VMs) and publishes it signed as `<version>` in its own
+  repository; its canary tag moves with `tag-iso` after image promotion. PRs
+  build it but publish nothing.
 - `promote` verifies the signature before copying the digest to a channel.
 - Canary devices stage a promotion within about two hours (hourly + up to 1 h
   jitter) and apply it in their next 03:00 window.

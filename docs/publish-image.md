@@ -91,32 +91,34 @@ registry before retrying.
 ## Publish the installer ISO
 
 The image workflow also builds the installer ISO for the same commit and pushes
-it as a signed OCI artifact next to the image, or to `GVPN_ISO_REPO` when that
-names a repository of its own, so an operator does not have to build one. The
-same ISO installs hardware and Incus VMs. It is published under the immutable
-`iso-<version>`; the moving `iso-canary` tag is moved separately with
+it as a signed OCI artifact to a repository of its own, `GVPN_ISO_REPO`, so an
+operator does not have to build one. The same ISO installs hardware and Incus
+VMs. It is published under the image's immutable `<version>`; the ISO
+repository's moving `canary` tag is moved separately with
 `just tag-iso VERSION`, after the matching image version was promoted to canary.
 From a workstation, after `just iso-console`:
 
 ```sh
+export GVPN_ISO_REPO='registry.example.org/fleet/gvpn-exit-os-iso'
 export GVPN_COSIGN_KEY=/secure/path/cosign.key
 export GVPN_COSIGN_PUB=/secure/path/cosign.pub
 export GVPN_COSIGN_PASSPHRASE_FILE=/secure/path/cosign.passphrase
-nix develop -c just publish-iso       # iso-<version> and iso-canary
-nix develop -c just push-iso          # only iso-<version>
+nix develop -c just publish-iso       # <version> and canary in GVPN_ISO_REPO
+nix develop -c just push-iso          # only <version>
 ```
 
 `tools/publish-iso.sh` writes a checksum file over the ISO and its version and
 target sidecars, signs that file with the same key as the image, verifies the
 signature, pushes `install.iso`, the checksum file, its signature and the two
-sidecars, and only then moves `iso-canary`. The version is the one the ISO build
-recorded, the version label of the embedded image; an ISO whose sidecars are
-missing or were written for another ISO is refused. `GVPN_ISO` names another ISO
-file. A version is never overwritten, and `push-iso` refuses a version that is
-already published from another build. `just
-tag-iso VERSION` pulls and verifies
-that version against `GVPN_COSIGN_PUB` before it moves `iso-canary`. Pulling
-with `just pull-iso <version>` (or `canary` after it was tagged) verifies the
+sidecars, and only then moves the ISO repository's `canary`. The version is the
+one the ISO build recorded, the version label of the embedded image; an ISO
+whose sidecars are missing or were written for another ISO is refused.
+`GVPN_ISO` names another ISO file. A version is never overwritten, and
+`push-iso` refuses a version that is already published from another build.
+`just
+tag-iso VERSION` pulls and verifies that version against `GVPN_COSIGN_PUB`
+before it moves the ISO repository's `canary`. Pulling with
+`just pull-iso <version>` (or `canary` after it was tagged) verifies the
 signature and the checksums of the ISO, its version and its target before it
 prints the local path; see
 [first install](first-install.md#pull-the-published-iso) and

@@ -86,7 +86,7 @@ _disk kind disk console:
         tools/render-bib-config.sh {{quote(kind)}} {{quote(ssh_key)}} > "${config}"; \
       SOURCE_TAG={{image_tag}} tools/builder.sh tools/build-disk.sh {{quote(kind)}} "${config}" {{quote(channel)}}
 
-# publish the installer ISO signed and move iso-canary to it
+# publish the installer ISO signed and move canary in the ISO repository to it
 publish-iso version="":
     tools/publish-iso.sh {{quote(version)}}
 
@@ -94,7 +94,7 @@ publish-iso version="":
 push-iso version="":
     tools/publish-iso.sh --no-channel {{quote(version)}}
 
-# move iso-canary to an already published version (no rebuild)
+# move canary in the ISO repository to an already published version (no rebuild)
 tag-iso version:
     tools/publish-iso.sh --tag-only {{quote(version)}}
 

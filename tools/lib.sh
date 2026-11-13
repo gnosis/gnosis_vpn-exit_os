@@ -22,21 +22,22 @@ base64_one_line() {
 GVPN_CHANNEL_RE='^(canary|stable)$'
 
 # iso_repo
-# Print the repository the installer ISO is published to and pulled from:
-# GVPN_ISO_REPO, or GVPN_IMAGE_REPO when the ISO lives next to the image. A
-# registry may keep installers apart from the images the devices pull.
+# Print the repository the installer ISO is published to and pulled from,
+# GVPN_ISO_REPO. It is a repository of its own: the ISO is tagged with the
+# plain version and channel, which in the image repository would replace the
+# image's own tags, and devices pull the image's channel.
 iso_repo() {
-  local name=GVPN_ISO_REPO repo="${GVPN_ISO_REPO:-}"
+  local repo="${GVPN_ISO_REPO:-}"
   if [[ -z "${repo}" ]]; then
-    name=GVPN_IMAGE_REPO
-    repo="${GVPN_IMAGE_REPO:-}"
-  fi
-  if [[ -z "${repo}" ]]; then
-    echo "Set GVPN_ISO_REPO to the installer ISO repository, or GVPN_IMAGE_REPO to the repository used to build the image" >&2
+    echo "Set GVPN_ISO_REPO to the installer ISO repository, a repository apart from the image's" >&2
     return 1
   fi
   if [[ ! "${repo}" =~ ^[a-z0-9][a-z0-9.-]*(:[0-9]+)?(/[a-z0-9]+([._-]+[a-z0-9]+)*)+$ ]]; then
-    echo "${name} must be a registry/repository without a scheme, tag or digest" >&2
+    echo "GVPN_ISO_REPO must be a registry/repository without a scheme, tag or digest" >&2
+    return 1
+  fi
+  if [[ "${repo}" == "${GVPN_IMAGE_REPO:-}" ]]; then
+    echo "GVPN_ISO_REPO is the image repository ${repo}; the ISO's version and channel tags would replace the image's, so give the ISO a repository of its own" >&2
     return 1
   fi
   printf '%s\n' "${repo}"

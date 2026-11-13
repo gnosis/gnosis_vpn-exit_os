@@ -14,6 +14,7 @@ DIGEST="sha256:1111111111111111111111111111111111111111111111111111111111111111"
 setup() {
   setup_sandbox
   export GVPN_IMAGE_REPO="registry.example.org/fleet/exit-os"
+  export GVPN_ISO_REPO="registry.example.org/fleet/exit-os-iso"
   export GVPN_ISO="${SANDBOX}/iso/install.iso"
   export GVPN_ISO_DIR="${SANDBOX}/output/published-iso"
   mkdir -p "$(dirname "${GVPN_ISO}")"
@@ -121,11 +122,11 @@ teardown() {
   teardown_sandbox
 }
 
-@test "publish pushes a signed artifact under the version and moves iso-canary" {
+@test "publish pushes a signed artifact under the version and moves canary" {
   run "${PUBLISH}" 1.2.3
   echo "${output}"
   [ "${status}" -eq 0 ]
-  grep -q '^oras push registry.example.org/fleet/exit-os:iso-1.2.3 --artifact-type application/vnd.gvpn-exit.installer-iso.v1+json' "${MOCK_LOG}"
+  grep -q '^oras push registry.example.org/fleet/exit-os-iso:1.2.3 --artifact-type application/vnd.gvpn-exit.installer-iso.v1+json' "${MOCK_LOG}"
   grep -q 'org.opencontainers.image.title=ExitOS installer ISO ' "${MOCK_LOG}"
   grep -q 'install.iso:application/x-iso9660-image' "${MOCK_LOG}"
   grep -q 'install.iso.sha256:text/plain' "${MOCK_LOG}"
@@ -140,26 +141,28 @@ teardown() {
   grep -q "^cosign verify-blob --key ${GVPN_COSIGN_PUB} --bundle .*install.iso.sha256.sigstore.json .*/install.iso.sha256\$" "${MOCK_LOG}"
   [ "$(awk '{ print $2 }' "${SANDBOX}/pushed.sha256" | sort | tr '\n' ' ')" = "install.iso install.iso.target install.iso.version " ]
   grep -qx "$(sha256sum "${GVPN_ISO}" | cut -d' ' -f1)  install.iso" "${SANDBOX}/pushed.sha256"
-  grep -qx 'oras tag registry.example.org/fleet/exit-os:iso-1.2.3 iso-canary' "${MOCK_LOG}"
-  [[ "${output}" == *"iso-canary points at it"* ]]
+  grep -qx 'oras tag registry.example.org/fleet/exit-os-iso:1.2.3 canary' "${MOCK_LOG}"
+  [[ "${output}" == *"canary points at it"* ]]
 }
 
-# The ISO may live in a repository of its own; the image repository is then
-# never written by the ISO publisher.
-@test "publish and pull use GVPN_ISO_REPO when it is set" {
-  export GVPN_ISO_REPO="registry.example.org/fleet/exit-os-iso"
+# The ISO has a repository of its own, so its tags are the plain version and
+# channel: in the image repository, they would replace the image's own tags.
+@test "publish and pull refuse to run without an ISO repository apart from the image's" {
   run "${PUBLISH}" 1.2.3
-  echo "${output}"
   [ "${status}" -eq 0 ]
-  grep -q '^oras push registry.example.org/fleet/exit-os-iso:iso-1.2.3 ' "${MOCK_LOG}"
-  grep -qx 'oras tag registry.example.org/fleet/exit-os-iso:iso-1.2.3 iso-canary' "${MOCK_LOG}"
-  [[ "${output}" == *"published registry.example.org/fleet/exit-os-iso:iso-1.2.3 "* ]]
-  make_artifact 1.2.3
-  run "${PULL}" 1.2.3
-  [ "${status}" -eq 0 ]
-  grep -q '^oras pull registry.example.org/fleet/exit-os-iso:iso-1.2.3 -o ' "${MOCK_LOG}"
   run grep 'registry.example.org/fleet/exit-os:' "${MOCK_LOG}"
   [ "${status}" -eq 1 ]
+  : >"${MOCK_LOG}"
+  for repo in "" "${GVPN_IMAGE_REPO}"; do
+    export GVPN_ISO_REPO="${repo}"
+    run "${PUBLISH}" 1.2.4
+    [ "${status}" -ne 0 ]
+    [[ "${output}" == *"GVPN_ISO_REPO"* ]]
+    run "${PULL}" 1.2.3
+    [ "${status}" -ne 0 ]
+    [[ "${output}" == *"GVPN_ISO_REPO"* ]]
+  done
+  [ ! -s "${MOCK_LOG}" ]
 }
 
 @test "an ISO repository needs no image repository, and a malformed one is refused" {
@@ -230,7 +233,7 @@ teardown() {
   echo 2.0.0 >"${GVPN_ISO}.version"
   run "${PUBLISH}" --no-channel
   [ "${status}" -eq 0 ]
-  grep -q '^oras push .*:iso-2.0.0 ' "${MOCK_LOG}"
+  grep -q '^oras push .*:2.0.0 ' "${MOCK_LOG}"
 }
 
 @test "publish refuses a dirty ISO" {
@@ -243,7 +246,7 @@ teardown() {
 }
 
 @test "publish refuses to overwrite an already published version" {
-  : >"${SANDBOX}/ref-registry.example.org_fleet_exit-os_iso-1.2.3"
+  : >"${SANDBOX}/ref-registry.example.org_fleet_exit-os-iso_1.2.3"
   run "${PUBLISH}" 1.2.3
   [ "${status}" -ne 0 ]
   [[ "${output}" == *"already published"* ]]
@@ -336,13 +339,13 @@ esac'
 }
 
 @test "tag-only ignores a stale local build and moves the channel" {
-  : >"${SANDBOX}/ref-registry.example.org_fleet_exit-os_iso-1.2.3"
+  : >"${SANDBOX}/ref-registry.example.org_fleet_exit-os-iso_1.2.3"
   make_artifact 1.2.3
   echo 9.9.9 >"${GVPN_ISO}.version"
   run "${PUBLISH}" --tag-only 1.2.3
   echo "${output}"
   [ "${status}" -eq 0 ]
-  grep -qx 'oras tag registry.example.org/fleet/exit-os:iso-1.2.3 iso-canary' "${MOCK_LOG}"
+  grep -qx 'oras tag registry.example.org/fleet/exit-os-iso:1.2.3 canary' "${MOCK_LOG}"
   run grep '^oras push ' "${MOCK_LOG}"
   [ "${status}" -eq 1 ]
   run grep '^cosign sign-blob ' "${MOCK_LOG}"
@@ -354,7 +357,7 @@ esac'
 # A channel only moves to an artifact that verifies against the update key,
 # like an image promotion.
 @test "tag-only verifies the published artifact before it moves the channel" {
-  : >"${SANDBOX}/ref-registry.example.org_fleet_exit-os_iso-1.2.3"
+  : >"${SANDBOX}/ref-registry.example.org_fleet_exit-os-iso_1.2.3"
   make_artifact 1.2.3
   run "${PUBLISH}" --tag-only 1.2.3
   [ "${status}" -eq 0 ]
@@ -365,7 +368,7 @@ esac'
   echo tampered >>"${SANDBOX}/artifact/install.iso.sha256"
   run "${PUBLISH}" --tag-only 1.2.3
   [ "${status}" -ne 0 ]
-  [[ "${output}" == *"iso-canary not moved"* ]]
+  [[ "${output}" == *"canary not moved"* ]]
   run grep '^oras tag ' "${MOCK_LOG}"
   [ "${status}" -eq 1 ]
   [ -z "$(ls -A "${GVPN_ISO_VERIFY_DIR}")" ]
@@ -384,7 +387,7 @@ esac'
   echo "${output}"
   [ "${status}" -eq 0 ]
   [ "${output}" = "${SANDBOX}/output/published-iso/install.iso" ]
-  grep -q '^oras pull registry.example.org/fleet/exit-os:iso-1.2.3 -o ' "${MOCK_LOG}"
+  grep -q '^oras pull registry.example.org/fleet/exit-os-iso:1.2.3 -o ' "${MOCK_LOG}"
   # The key is GVPN_COSIGN_PUB and the signed blob is the checksum file, which
   # the real sha256sum then checks the ISO and its sidecars against.
   grep -q "^cosign verify-blob --key ${GVPN_COSIGN_PUB} --bundle .*install.iso.sha256.sigstore.json --insecure-ignore-tlog=true .*/install.iso.sha256\$" "${MOCK_LOG}"
@@ -395,6 +398,7 @@ esac'
   make_artifact 1.2.3
   run "${PULL}" canary
   [ "${status}" -eq 0 ]
+  grep -q '^oras pull registry.example.org/fleet/exit-os-iso:canary -o ' "${MOCK_LOG}"
   [ "${output}" = "${SANDBOX}/output/published-iso/install.iso" ]
 }
 

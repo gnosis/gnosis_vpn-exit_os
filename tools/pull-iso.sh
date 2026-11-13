@@ -5,15 +5,15 @@
 # three are checked against it, so nothing read here is outside the signature.
 # A tag is not: under `canary`, or a version tag, a registry can still serve
 # another ISO that was published with the same key, and only a version tag
-# then fails, on the version the artifact reports. The artifact is the one tools/publish-iso.sh
-# pushes next to the image: iso-<version> or the iso-canary tag. The same ISO
+# then fails, on the version the artifact reports. The artifact is the one
+# tools/publish-iso.sh pushes to GVPN_ISO_REPO: a version or the canary tag. The same ISO
 # installs hardware from a USB stick or an Incus VM, so it must detect its
 # install disk, carry no bastion enrollment and be configured on the console.
 #
 #   tools/pull-iso.sh VERSION|canary
 #
-#   GVPN_ISO_REPO      registry repository of the ISO (default:
-#                      GVPN_IMAGE_REPO; one of the two is required)
+#   GVPN_ISO_REPO      registry repository of the ISO, required, and not
+#                      GVPN_IMAGE_REPO
 #   GVPN_COSIGN_PUB    public half of the image-update key (default:
 #                      keys/cosign.pub)
 #   GVPN_ISO_DIR       local directory (default: output/published-iso)
@@ -38,7 +38,7 @@ main() {
   [[ "${ref}" =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$ ]] || die "invalid version or channel '${ref}'"
   [[ -n "${OUT}" && "${OUT}" != "/" ]] || die "GVPN_ISO_DIR must name a directory, got '${OUT}'"
   require_public_key "${GVPN_COSIGN_PUB}" || exit 1
-  tag="iso-${ref}"
+  tag="${ref}"
 
   if [[ -e "${OUT}" && ! -d "${OUT}" ]]; then
     die "GVPN_ISO_DIR is not a directory: ${OUT}"

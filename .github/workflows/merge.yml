@@ -13,8 +13,8 @@ permissions:
 
 env:
   GVPN_IMAGE_REPO: ${{ vars.GVPN_IMAGE_REPO || secrets.GVPN_IMAGE_REPO }}
-  # Optional: a repository of its own for the installer ISO. Empty publishes
-  # the ISO next to the image.
+  # Required: a repository of its own for the installer ISO, tagged with the
+  # image's version and channel names.
   GVPN_ISO_REPO: ${{ vars.GVPN_ISO_REPO }}
 
 jobs:
@@ -137,12 +137,13 @@ jobs:
 
       # The ISO installs the image built above. Push its immutable artifact
       # before the image so a failure here leaves no image version published
-      # on its own. A rerun rebuilds the image: --no-channel then finds
-      # iso-<version> published with another embedded image and fails this
+      # on its own. A rerun rebuilds the image: --no-channel then finds the
+      # ISO's <version> published with another embedded image and fails this
       # step, so the image step never pushes a build that differs from the
       # one the published ISO embeds; release again from a new commit. It
-      # leaves iso-<version> alone only when it embeds this very build.
-      # iso-canary moves separately, together with a promoted image channel.
+      # leaves the ISO's <version> alone only when it embeds this very build.
+      # The ISO's canary moves separately, together with a promoted image
+      # channel.
       - name: Push the installer ISO (no channel tag)
         run: nix develop -c just push-iso
 
@@ -155,9 +156,9 @@ jobs:
         run: |
           iso_dir=output/iso/bootiso
           version="$(< "${iso_dir}/install.iso.version")"
-          iso_repo="${GVPN_ISO_REPO:-${GVPN_IMAGE_REPO}}"
+          iso_repo="${GVPN_ISO_REPO}"
           image_digest="$(nix develop -c skopeo inspect --no-tags --format '{{.Digest}}' "docker://${GVPN_IMAGE_REPO}:${version}")"
-          iso_digest="$(nix develop -c oras manifest fetch --descriptor "${iso_repo}:iso-${version}" | jq -r .digest)"
+          iso_digest="$(nix develop -c oras manifest fetch --descriptor "${iso_repo}:${version}" | jq -r .digest)"
           iso_size="$(numfmt --to=iec --suffix=B "$(stat -c %s "${iso_dir}/install.iso")")"
           embedded="$(sed -n 's/^image=//p' "${iso_dir}/install.iso.target")"
           target="$(grep -E '^(disk|enrollment|access)=' "${iso_dir}/install.iso.target" | paste -sd' ')"
@@ -168,7 +169,7 @@ jobs:
             echo "| | Reference | Digest |"
             echo "| --- | --- | --- |"
             echo "| Image | \`${GVPN_IMAGE_REPO}:${version}\` | \`${image_digest}\` |"
-            echo "| Installer ISO | \`${iso_repo}:iso-${version}\` | \`${iso_digest}\` |"
+            echo "| Installer ISO | \`${iso_repo}:${version}\` | \`${iso_digest}\` |"
             echo
             echo "Both are signed with the image-update key, SHA-256 fingerprint \`${key_sha256}\`; compare it with the key you verify against: \`openssl pkey -pubin -in cosign.pub -outform DER | sha256sum\`."
             echo
@@ -177,7 +178,7 @@ jobs:
             echo
             echo "Pull and verify the ISO: \`GVPN_ISO_REPO=${iso_repo} GVPN_COSIGN_PUB=<update key .pub> just pull-iso ${version}\`, or with curl ([first install](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/blob/${GITHUB_SHA}/docs/first-install.md#pull-the-published-iso))."
             echo
-            echo "Promote: run **Promote Image** with version \`${version}\` and channel \`canary\`, then \`just tag-iso ${version}\` to move \`iso-canary\`."
+            echo "Promote: run **Promote Image** with version \`${version}\` and channel \`canary\`, then \`just tag-iso ${version}\` to move \`canary\` in the ISO repository."
           } >> "${GITHUB_STEP_SUMMARY}"
 
       - name: Cleanup signing keys

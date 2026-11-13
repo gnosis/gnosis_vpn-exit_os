@@ -79,13 +79,13 @@ nix develop -c just incus-install-published VERSION     # pulls the published IS
 A local build is at `output/iso/bootiso/install.iso`, for example after
 `just iso-console`.
 
-`incus-install-published` pulls with `just pull-iso` (signature verified against
-`GVPN_COSIGN_PUB`, checksums of the ISO, its version and its target) into
-`output/published-iso/`; to inspect the download first, run
+`incus-install-published` pulls from `GVPN_ISO_REPO` with `just pull-iso`
+(signature verified against `GVPN_COSIGN_PUB`, checksums of the ISO, its version
+and its target) into `output/published-iso/`; to inspect the download first, run
 `just pull-iso VERSION` and then
 `just incus-install output/published-iso/install.iso`. Use `canary` instead of
-`VERSION` once `iso-canary` points at it; a version that is not promoted yet
-installs a VM that then updates to the older canary image
+`VERSION` once the ISO repository's `canary` points at it; a version that is not
+promoted yet installs a VM that then updates to the older canary image
 ([the published ISO](first-install.md#pull-the-published-iso)).
 
 `incus-install` creates the VM `gvpn-exit`, adds a vTPM and a second disk for
