@@ -209,6 +209,40 @@ the checksums of the ISO, its version and its target, and prints the path of
 `canary` is whatever signed ISO the tag points at. The registry must allow
 anonymous pulls (as it does for image updates) or accept your registry login.
 
+Without this repository or `oras`, `curl`, `jq`, `openssl` and `sha256sum` do
+the same. Each file of the artifact is a layer named after it. The signature in
+`install.iso.sha256.sigstore.json` is a plain ECDSA signature of
+`install.iso.sha256`, so `openssl` verifies it against the public key; the
+signed checksum file then covers the ISO and both sidecars. The registry has to
+serve anonymous pulls without a token, as Google Artifact Registry does for a
+public repository.
+
+```sh
+REPO='registry.example.org/fleet/gvpn-exit-os'   # GVPN_ISO_REPO, or GVPN_IMAGE_REPO
+TAG='iso-VERSION'                                # or iso-canary
+H="https://${REPO%%/*}" N="${REPO#*/}"
+curl -fsS -H 'Accept: application/vnd.oci.image.manifest.v1+json' \
+  "${H}/v2/${N}/manifests/${TAG}" > manifest.json
+for f in install.iso install.iso.sha256 install.iso.sha256.sigstore.json \
+         install.iso.version install.iso.target; do
+  digest="$(jq -er --arg f "${f}" \
+    '.layers[] | select(.annotations["org.opencontainers.image.title"] == $f) | .digest' manifest.json)"
+  curl -fsSL -o "${f}" "${H}/v2/${N}/blobs/${digest}"
+done
+
+# the signature on the checksum file, against the image-update public key
+jq -r .messageSignature.signature install.iso.sha256.sigstore.json | base64 -d > install.iso.sha256.sig
+openssl dgst -sha256 -verify /secure/path/cosign.pub -signature install.iso.sha256.sig install.iso.sha256
+# the signed list names exactly the ISO and both sidecars, and they match it
+awk '{ print $2 }' install.iso.sha256 | sort | paste -sd' '   # install.iso install.iso.target install.iso.version
+sha256sum -c --strict install.iso.sha256
+# what the signed sidecars say: the version, and disk=auto, enrollment=none, access=console
+cat install.iso.version install.iso.target
+```
+
+Check the last three outputs by eye: `just pull-iso` refuses an ISO whose list
+or target differs, and a version that is not the one asked for.
+
 ### Put it on the device
 
 _Hardware only._ Write the stick:
