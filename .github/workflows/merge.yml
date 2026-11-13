@@ -73,6 +73,13 @@ jobs:
       - name: Check pinned image references
         run: nix develop -c just check-pins
 
+      # With overlayfs redirect_dir on, as the runner kernel ships it, Podman
+      # cannot use overlay's native diff and commits every build step by
+      # walking the whole rootfs, about a minute per step. Turning it off for
+      # new mounts restores the native diff.
+      - name: Let Podman use overlay's native diff
+        run: echo N | sudo tee /sys/module/overlay/parameters/redirect_dir
+
       - name: Run just build
         run: nix develop -c just build
 
