@@ -13,9 +13,6 @@ permissions:
 
 env:
   GVPN_IMAGE_REPO: ${{ vars.GVPN_IMAGE_REPO || secrets.GVPN_IMAGE_REPO }}
-  # Required: a repository of its own for the installer ISO, tagged with the
-  # image's version and channel names.
-  GVPN_ISO_REPO: ${{ vars.GVPN_ISO_REPO }}
 
 jobs:
   build-and-push:
@@ -83,9 +80,12 @@ jobs:
       - name: Run just build
         run: nix develop -c just build
 
-      # Build both artifacts before either is pushed: a failed ISO build must
-      # not leave an image version published on its own. The image is already
-      # in the builder's storage, so only the disk build runs here.
+      # The ISO is built here as a check and is not published: an image that
+      # cannot be made into an installer must not be pushed. The published ISO
+      # is built by the Promote Image workflow, for the channel the version is
+      # promoted to, because an ISO installs a device that follows one channel.
+      # The image is already in the builder's storage, so only the disk build
+      # runs here.
       - name: Build the console-configured installer ISO
         run: nix develop -c just iso-console-only
 
@@ -113,7 +113,7 @@ jobs:
       # Only the push talks to the registry: check-pins and the build pull
       # public images. Google Artifact Registry is reached through Workload
       # Identity Federation, so no registry credential is stored; the token
-      # lasts an hour, so it is fetched right before the pushes.
+      # lasts an hour, so it is fetched right before the push.
       - name: Authenticate to Google Cloud
         id: gcp
         uses: hoprnet/hopr-workflows/actions/setup-gcp@837b94246698537325ecc664dfb22c72c0d6b8ed # setup-gcp-v4
@@ -121,31 +121,13 @@ jobs:
           workload_identity_provider: projects/656686060169/locations/global/workloadIdentityPools/gnosisvpn-gh-pool/providers/github-provider
           service_account: download-gnosisvpn-gh-sa@gnosisvpn-production.iam.gserviceaccount.com
 
-      # A GVPN_ISO_REPO on another Artifact Registry host is logged in to with
-      # the same token.
       - name: Log in to the registry
         env:
           ACCESS_TOKEN: ${{ steps.gcp.outputs.access_token }}
         run: |
           printf '%s' "${ACCESS_TOKEN}" \
             | docker login "${GVPN_IMAGE_REPO%%/*}" --username oauth2accesstoken --password-stdin
-          if [[ -n "${GVPN_ISO_REPO:-}" && "${GVPN_ISO_REPO%%/*}" != "${GVPN_IMAGE_REPO%%/*}" ]]; then
-            printf '%s' "${ACCESS_TOKEN}" \
-              | docker login "${GVPN_ISO_REPO%%/*}" --username oauth2accesstoken --password-stdin
-          fi
           echo "REGISTRY_AUTH_FILE=${DOCKER_CONFIG:-${HOME}/.docker}/config.json" >> "${GITHUB_ENV}"
-
-      # The ISO installs the image built above. Push its immutable artifact
-      # before the image so a failure here leaves no image version published
-      # on its own. A rerun rebuilds the image: --no-channel then finds the
-      # ISO's <version> published with another embedded image and fails this
-      # step, so the image step never pushes a build that differs from the
-      # one the published ISO embeds; release again from a new commit. It
-      # leaves the ISO's <version> alone only when it embeds this very build.
-      # The ISO's canary moves separately, together with a promoted image
-      # channel.
-      - name: Push the installer ISO (no channel tag)
-        run: nix develop -c just push-iso
 
       - name: Run just push (push image without channel tag)
         run: nix develop -c just push
@@ -156,12 +138,7 @@ jobs:
         run: |
           iso_dir=output/iso/bootiso
           version="$(< "${iso_dir}/install.iso.version")"
-          iso_repo="${GVPN_ISO_REPO}"
           image_digest="$(nix develop -c skopeo inspect --no-tags --format '{{.Digest}}' "docker://${GVPN_IMAGE_REPO}:${version}")"
-          iso_digest="$(nix develop -c oras manifest fetch --descriptor "${iso_repo}:${version}" | jq -r .digest)"
-          iso_size="$(numfmt --to=iec --suffix=B "$(stat -c %s "${iso_dir}/install.iso")")"
-          embedded="$(sed -n 's/^image=//p' "${iso_dir}/install.iso.target")"
-          target="$(grep -E '^(disk|enrollment|access)=' "${iso_dir}/install.iso.target" | paste -sd' ')"
           key_sha256="$(openssl pkey -pubin -in "${GVPN_COSIGN_PUB}" -outform DER | sha256sum | cut -d' ' -f1)"
           {
             echo "## Published \`${version}\`"
@@ -169,16 +146,12 @@ jobs:
             echo "| | Reference | Digest |"
             echo "| --- | --- | --- |"
             echo "| Image | \`${GVPN_IMAGE_REPO}:${version}\` | \`${image_digest}\` |"
-            echo "| Installer ISO | \`${iso_repo}:${version}\` | \`${iso_digest}\` |"
             echo
-            echo "Both are signed with the image-update key, SHA-256 fingerprint \`${key_sha256}\`; compare it with the key you verify against: \`openssl pkey -pubin -in cosign.pub -outform DER | sha256sum\`."
+            echo "Signed with the image-update key, SHA-256 fingerprint \`${key_sha256}\`; compare it with the key you verify against: \`openssl pkey -pubin -in cosign.pub -outform DER | sha256sum\`."
             echo
-            echo "The ISO is ${iso_size}, \`${target}\`, and embeds the image with ID \`${embedded}\`."
-            echo "No channel tag moved: devices on \`canary\` do not see this build yet."
+            echo "No channel tag moved: devices on \`canary\` do not see this build yet. An installer ISO was built as a check and not published."
             echo
-            echo "Pull and verify the ISO: \`GVPN_ISO_REPO=${iso_repo} GVPN_COSIGN_PUB=<update key .pub> just pull-iso ${version}\`, or with curl ([first install](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/blob/${GITHUB_SHA}/docs/first-install.md#pull-the-published-iso))."
-            echo
-            echo "Promote: run **Promote Image** with version \`${version}\` and channel \`canary\`, then \`just tag-iso ${version}\` to move \`canary\` in the ISO repository."
+            echo "Promote: run **Promote Image** with version \`${version}\` and channel \`canary\`. It moves the image channel and publishes the installer ISO that follows it."
           } >> "${GITHUB_STEP_SUMMARY}"
 
       - name: Cleanup signing keys

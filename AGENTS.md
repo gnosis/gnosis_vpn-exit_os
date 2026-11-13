@@ -74,6 +74,9 @@ the VM harness needs x86_64 Linux with KVM (`cpu.bats` skips on Darwin because
 - `just push` - push the built image signed without moving a channel tag.
 - `just promote <version> <channel>` - promote an existing version to canary or
   stable after verifying its signature against `GVPN_COSIGN_PUB`.
+- `just pull-image <version>` - verify a published version and pull it into the
+  builder as the built image; `just channel=<channel> iso-console-only` then
+  builds the installer ISO of a promotion from it.
 - `just recovery-build` / `just recovery-image` / `just recovery-usb` - build
   the recovery stick, pack it into one image to send, or write it to a stick
   ([runbook](docs/recovery.md)).
@@ -84,13 +87,17 @@ the VM harness needs x86_64 Linux with KVM (`cpu.bats` skips on Darwin because
   to hardware (min. 8 vCPUs, 16 GiB RAM).
 - `just pull-iso REF` - pull the published ISO into `output/published-iso/` and
   verify it against `GVPN_COSIGN_PUB`. The ISO lives in its own repository,
-  `GVPN_ISO_REPO` (required, never the same as `GVPN_IMAGE_REPO`), under the
-  same `<version>` and `canary` tags as the image. CI builds it from the image
-  and publishes it as a signed OCI artifact before it pushes the image:
+  `GVPN_ISO_REPO` (required, never the same as `GVPN_IMAGE_REPO`), under
+  `<version>-<channel>` and the channel tags `canary` and `stable`: an ISO
+  installs a device that follows one channel for its updates, the one it was
+  built for. The Promote Image workflow builds it from the promoted image and
+  publishes it as a signed OCI artifact when it moves the image channel:
   unmanaged, console-configured with no SSH key, install disk picked at install
   time. `just incus-install-published REF` pulls and installs it in one step,
-  `just publish-iso` / `just push-iso` publish it by hand, and
-  `just tag-iso VERSION` moves the ISO repository's `canary` after a promotion.
+  `just publish-iso` / `just push-iso` publish it by hand once `GVPN_IMAGE_REPO`
+  serves the image it embeds under its channel (its version for `push-iso`), and
+  `just tag-iso VERSION CHANNEL` moves a channel of the ISO repository to an ISO
+  that is already published.
 - `just test-integration unprovisioned|enroll|provision|provisioned|address|update` -
   checks against the running VM over SSH (`VM_SSH_KEY` selects the key). The VM
   ISO is built against the throwaway bastion `tests/integration/bastion.sh`.

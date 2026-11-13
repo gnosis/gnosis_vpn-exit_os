@@ -52,11 +52,12 @@ iso: build (_disk "iso" install_disk "0")
 
 # Configured from its console: no SSH key, the operator adds their own after
 # the first console login (the VM console, or keyboard and monitor on
-# hardware). This is what CI publishes.
+# hardware). This is what CI publishes. The installed device follows `canary`
+# for its updates, or the channel given as `just channel=stable iso-console`.
 # unattended installer ISO configured from its console (wipes the install disk)
 iso-console: build (_disk "iso" install_disk "1")
 
-# console-configured installer ISO from the image already built (CI after `just build`)
+# console-configured installer ISO from the image already built (CI after `just build` or `just pull-image`)
 iso-console-only: (_disk "iso" install_disk "1")
 
 # stable moves only through `just promote`
@@ -72,6 +73,10 @@ push:
 promote version channel:
     tools/promote.sh {{quote(version)}} {{quote(channel)}}
 
+# pull a published version, verified against GVPN_COSIGN_PUB, into the builder as the built image
+pull-image version:
+    SOURCE_TAG={{image_tag}} tools/promote.sh --pull {{quote(version)}}
+
 # qcow2 disk for QEMU
 qcow2: build (_disk "qcow2" install_disk "0")
 
@@ -86,7 +91,7 @@ _disk kind disk console:
         tools/render-bib-config.sh {{quote(kind)}} {{quote(ssh_key)}} > "${config}"; \
       SOURCE_TAG={{image_tag}} tools/builder.sh tools/build-disk.sh {{quote(kind)}} "${config}" {{quote(channel)}}
 
-# publish the installer ISO signed and move canary in the ISO repository to it
+# publish the installer ISO signed as <version>-<channel> and move the channel it was built for to it
 publish-iso version="":
     tools/publish-iso.sh {{quote(version)}}
 
@@ -94,11 +99,11 @@ publish-iso version="":
 push-iso version="":
     tools/publish-iso.sh --no-channel {{quote(version)}}
 
-# move canary in the ISO repository to an already published version (no rebuild)
-tag-iso version:
-    tools/publish-iso.sh --tag-only {{quote(version)}}
+# move a channel in the ISO repository to the ISO already published for that version and channel (no rebuild)
+tag-iso version channel:
+    tools/publish-iso.sh --tag-only {{quote(version)}} {{quote(channel)}}
 
-# pull a published installer ISO (version or canary) into output/published-iso and print its path
+# pull a published installer ISO (canary, stable or <version>-<channel>) into output/published-iso and print its path
 pull-iso ref:
     tools/pull-iso.sh {{quote(ref)}}
 

@@ -42,10 +42,10 @@ mkdir -p "${out}"
 
 # An installer ISO gets two sidecars: install.iso.version, the version label
 # of the image it embeds, and install.iso.target, what the rendered kickstart
-# does (disk, enrollment, access) plus the embedded image's ID and the ISO's
-# sha256. tools/publish-iso.sh trusts them, so they are removed before the
-# build: a build that stops early never leaves an ISO beside the description
-# of an earlier one.
+# does (disk, enrollment, access), the channel the installed device follows,
+# the embedded image's ID and the ISO's sha256. tools/publish-iso.sh trusts
+# them, so they are removed before the build: a build that stops early never
+# leaves an ISO beside the description of an earlier one.
 if [[ "${kind}" == iso ]]; then
   find "${out}" \( -name '*.iso.version' -o -name '*.iso.target' \) -delete
   read -r image_id image_version <<< "$(podman image inspect \
@@ -92,8 +92,8 @@ if [[ "${kind}" == iso ]]; then
   fi
   while IFS= read -r iso; do
     printf '%s\n' "${image_version}" > "${iso}.version"
-    printf 'disk=%s\nenrollment=%s\naccess=%s\nimage=%s\nsha256=%s\n' \
-      "${disk}" "${enrollment}" "${access}" "${image_id}" \
+    printf 'disk=%s\nenrollment=%s\naccess=%s\nchannel=%s\nimage=%s\nsha256=%s\n' \
+      "${disk}" "${enrollment}" "${access}" "${channel}" "${image_id}" \
       "$(sha256sum "${iso}" | cut -d' ' -f1)" > "${iso}.target"
   done < <(find "${out}" -type f -name '*.iso')
 fi

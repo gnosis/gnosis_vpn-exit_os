@@ -24,8 +24,8 @@ GVPN_CHANNEL_RE='^(canary|stable)$'
 # iso_repo
 # Print the repository the installer ISO is published to and pulled from,
 # GVPN_ISO_REPO. It is a repository of its own: the ISO is tagged with the
-# plain version and channel, which in the image repository would replace the
-# image's own tags, and devices pull the image's channel.
+# channel names, which in the image repository would replace the image's own
+# channel tags, and devices pull the image's channel.
 iso_repo() {
   local repo="${GVPN_ISO_REPO:-}"
   if [[ -z "${repo}" ]]; then
@@ -37,7 +37,7 @@ iso_repo() {
     return 1
   fi
   if [[ "${repo}" == "${GVPN_IMAGE_REPO:-}" ]]; then
-    echo "GVPN_ISO_REPO is the image repository ${repo}; the ISO's version and channel tags would replace the image's, so give the ISO a repository of its own" >&2
+    echo "GVPN_ISO_REPO is the image repository ${repo}; the ISO's channel tags would replace the image's, so give the ISO a repository of its own" >&2
     return 1
   fi
   printf '%s\n' "${repo}"

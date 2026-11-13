@@ -49,9 +49,9 @@ never put a private key under `keys/`.
 | `vm-install`                  | Installs the ISO into a fresh VM; deletes `output/vm/`                                                                                                                                                                            |
 | `vm-run`                      | Boots the installed VM on the terminal; `Ctrl-a x` quits                                                                                                                                                                          |
 | `vm-ssh [command]`            | SSH as devops to localhost port 2222                                                                                                                                                                                              |
-| `publish-iso [VERSION]`       | Signs and pushes the installer ISO, then moves `canary` in the ISO repository                                                                                                                                                     |
-| `push-iso [VERSION]`          | Signs and pushes the installer ISO without moving a channel tag (idempotent for one build; refuses a version published from another build)                                                                                        |
-| `tag-iso VERSION`             | Verifies an already published version against `GVPN_COSIGN_PUB`, then moves `canary` in the ISO repository to it                                                                                                                  |
+| `publish-iso [VERSION]`       | Signs and pushes the installer ISO as `<version>-<channel>`, then moves that channel in the ISO repository; the channel is the one the ISO was built for, and the image channel has to serve the image the ISO embeds             |
+| `push-iso [VERSION]`          | Signs and pushes the installer ISO as `<version>-<channel>` without moving a channel tag, once the image version is published (idempotent for one build; refuses a version published from another build)                          |
+| `tag-iso VERSION CHANNEL`     | Verifies the already published `<version>-<channel>` against `GVPN_COSIGN_PUB` and that the image channel serves its image, then moves that channel in the ISO repository to it                                                   |
 | `pull-iso REF`                | Pulls a published ISO into `output/published-iso/`, verifies the signature and the checksums of the ISO, its version and its target, and prints its path                                                                          |
 | `incus-install [ISO]`         | Builds an ISO with `iso` and boots the installer in a new Incus VM; with `ISO`, installs that file                                                                                                                                |
 | `incus-install-published REF` | Pulls a published ISO and installs it in a new Incus VM                                                                                                                                                                           |
@@ -67,6 +67,7 @@ never put a private key under `keys/`.
 | `publish`                     | Signs and pushes the built image ([runbook](publish-image.md))                                                                                                                                                                    |
 | `push`                        | Signs and pushes the built image without moving a channel tag                                                                                                                                                                     |
 | `promote VERSION CHANNEL`     | Promotes a version to canary or stable after signature verification                                                                                                                                                               |
+| `pull-image VERSION`          | Verifies a published version and pulls it into the builder as the built image, so `channel=CHANNEL iso-console-only` builds the installer ISO of a promotion from it                                                              |
 
 `vm-install`, `vm-run` and `test-integration` drive the QEMU harness, so they
 need the Linux devshell. `incus-install`, `incus-run`, `incus-ssh`,
@@ -147,14 +148,15 @@ The installer ISO also reads:
 | `GVPN_CONSOLE_ACCESS` | `1` builds an ISO with no installer SSH key and an expired `devops` console password; `just iso-console` sets it. `just iso` stays key-configured.                                                                                                                                                                                                                                                                     |
 | `GVPN_ISO`            | The ISO path that `publish-iso`, `push-iso` and `usb` use instead of `output/iso/bootiso/install.iso`                                                                                                                                                                                                                                                                                                                  |
 | `GVPN_ISO_DIR`        | Where `pull-iso` downloads to, default `output/published-iso`                                                                                                                                                                                                                                                                                                                                                          |
-| `GVPN_ISO_VERIFY_DIR` | Where `tag-iso` downloads the version it verifies, removed afterwards; default `output`                                                                                                                                                                                                                                                                                                                                |
+| `GVPN_ISO_VERIFY_DIR` | Where `publish-iso` and `tag-iso` download the published ISO they verify, removed afterwards; default `output`                                                                                                                                                                                                                                                                                                         |
 
 ## CI
 
 `.github/workflows/` builds on every pull request, pushes a signed image on
-every merge to `main`, and promotes manually. The release workflows push to
-Google Artifact Registry and log in through Workload Identity Federation: GitHub
-hands the job an OIDC token, the `gnosisvpn-gh-pool` provider in
+every merge to `main`, and promotes manually; a promotion also builds and
+publishes the installer ISO of its channel. The release workflows push to Google
+Artifact Registry and log in through Workload Identity Federation: GitHub hands
+the job an OIDC token, the `gnosisvpn-gh-pool` provider in
 `gnosisvpn-production` exchanges it for the
 `download-gnosisvpn-gh-sa@gnosisvpn-production.iam.gserviceaccount.com` service
 account, and its access token logs Docker in as `oauth2accesstoken`. No registry
@@ -166,13 +168,13 @@ not only the `release` environment, so push access is not the control: devices
 accept only images signed with the key below. Point the workflows at the
 repositories with repository settings:
 
-| Kind     | Name                     | Value                                                                                                                                                   |
-| -------- | ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| variable | `GVPN_IMAGE_REPO`        | the repository to push to                                                                                                                               |
-| variable | `GVPN_ISO_REPO`          | the installer ISO's repository, in the same `registry[:port]/path` form; required, and not `GVPN_IMAGE_REPO`, since the ISO takes the image's tag names |
-| variable | `GVPN_COSIGN_PUB`        | public half of the image-update key pair, `BEGIN PUBLIC KEY` block and all                                                                              |
-| secret   | `GVPN_COSIGN_KEY`        | private half of the same pair                                                                                                                           |
-| secret   | `GVPN_COSIGN_PASSPHRASE` | its passphrase, if it has one                                                                                                                           |
+| Kind     | Name                     | Value                                                                                                                                                                                 |
+| -------- | ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| variable | `GVPN_IMAGE_REPO`        | the repository to push to                                                                                                                                                             |
+| variable | `GVPN_ISO_REPO`          | the installer ISO's repository, in the same `registry[:port]/path` form; required by the promotion workflow, and not `GVPN_IMAGE_REPO`, since the ISO takes the image's channel names |
+| variable | `GVPN_COSIGN_PUB`        | public half of the image-update key pair, `BEGIN PUBLIC KEY` block and all                                                                                                            |
+| secret   | `GVPN_COSIGN_KEY`        | private half of the same pair                                                                                                                                                         |
+| secret   | `GVPN_COSIGN_PASSPHRASE` | its passphrase, if it has one                                                                                                                                                         |
 
 The signing key and its passphrase belong to a GitHub environment named
 `release`: create it in the repository settings, restrict its deployment
@@ -185,26 +187,58 @@ restrictions, so create and restrict it before the secrets are added. Store the
 key there and not at repository level, because a repository secret is readable
 by any workflow run in the repository, including one from an unreviewed branch;
 a signing key in that place lets anyone who can push a branch sign an image
-every device accepts. Whoever can run the release workflow can sign, so the
-environment's reviewers and their accounts are the protection.
+every device accepts. Whoever can run a release workflow can sign, so the
+environment's reviewers and their accounts are the protection. Both workflows
+use the key: the merge workflow signs the image, the promotion workflow signs
+the installer ISO.
 
-The merge workflow also builds the installer ISO and publishes it as a signed
-OCI artifact in a repository of its own, `GVPN_ISO_REPO`, under the image's
-immutable `<version>`, so an operator can pull it without building locally, for
-hardware or an Incus VM. That ISO is unmanaged, picks its install disk itself
-and has no installer SSH key: its first access is the console, where the
-operator adds their own key
+An installer ISO installs a device that follows one channel of the image
+repository for its updates, `canary` or `stable`; the channel is written into
+the ISO when it is built. The ISO is therefore built and published by the
+**Promote Image** workflow, once per promotion, and not by the merge workflow:
+
+1. it checks `GVPN_ISO_REPO` as `publish-iso` does, verifies the signature of
+   the version and pulls that digest into the builder
+   (`just pull-image VERSION`), so the ISO embeds the promoted image itself; the
+   pull is anonymous, like the devices', and the registry login comes after the
+   build;
+2. it builds the console ISO for the channel
+   (`just channel=CHANNEL iso-console-only`), before any tag moves, so a failed
+   build leaves both channels where they were;
+3. it writes the signing key and checks that it opens with its passphrase and is
+   the private half of `GVPN_COSIGN_PUB`, still before any tag moves;
+4. it moves the image channel (`just promote VERSION CHANNEL`);
+5. it signs the ISO and pushes it to `GVPN_ISO_REPO` as `<version>-<channel>`,
+   then moves `<channel>` there to it (`just publish-iso`).
+
+An ISO under `stable` thus installs a device on `stable`, an ISO under `canary`
+a device on `canary`. `publish-iso` pushes an ISO for a channel, and moves the
+ISO channel, only while the image channel serves the image the ISO embeds: the
+image's config digest in the registry has to be the image ID the ISO build
+recorded (`push-iso` checks the version tag instead, and `tag-iso` checks the
+channel it moves). An ISO built from a local rebuild of a version, rather than
+from the published image (`just pull-image`), has another image ID and is
+refused. That ISO is unmanaged, picks its install disk itself and has no
+installer SSH key: its first access is the console, where the operator adds
+their own key
 ([first access on the console](local-access.md#first-access-on-the-console)). A
 managed ISO carries an enrollment private key, so it is built per device and
-never published. Like the image's, the ISO's `canary` moves separately with
-`just tag-iso VERSION` after the matching image was promoted. Pull requests
-build the console ISO too and publish nothing.
+never published.
 
-The ISO is pushed before the image. A version names one build: when the image
-push fails, a rerun of the job rebuilds the image, finds the ISO's `<version>`
-published with another embedded image ID and stops at the ISO step, so the
-rebuilt image is never pushed under that version. The ISO's `<version>` then
-exists without the image's; release again from a new commit.
+A version that is promoted to a channel again, because the channel went back to
+it, has its `<version>-<channel>` published already. The promotion then leaves
+that ISO as it is, pulls it by digest, verifies it against `GVPN_COSIGN_PUB`,
+compares the image its signed target records and moves the channel back to that
+digest. When step 5 fails after step 4, the image channel has moved and the ISO
+channel has not: the ISO still under the channel installs the version the
+channel served before, and a device installed from it then updates to the
+promoted one. After a promotion that is an update; after a rollback it is a
+downgrade, from the newer version the ISO installs to the older one the channel
+went back to. Run the promotion again to publish the ISO; steps 1 and 3 stop a
+promotion with an unusable ISO repository or signing key before step 4.
+
+The merge workflow and pull requests build the console ISO too, as a check that
+the image can be made into an installer, and publish no ISO.
 
 The push logs in with `docker login`, so a registry that takes a user and a
 password (or a token) needs no workflow change. Pull requests from forks never
@@ -297,30 +331,37 @@ build. The version is the version label of the image the ISO embeds, not the
 checkout's. The target sidecar is read from the rendered kickstart: the disk
 (`disk=auto` or the pinned name), whether the ISO carries bastion enrollment
 data (`enrollment=none|bastion`) and whether access is `key` or `console`; it
-also records the embedded image's ID (`image=`) and the ISO's checksum
-(`sha256=`). Publishing and pulling require `disk=auto`, `enrollment=none` and
-`access=console`, so a publisher cannot push an installer pinned to one disk, an
-ISO with a private enrollment key or an ISO with a shared `devops` key by
-mistake. `tools/publish-iso.sh` refuses an ISO without a version sidecar or
+also records the channel the installed device follows (`channel=`), the embedded
+image's ID (`image=`) and the ISO's checksum (`sha256=`). Publishing and pulling
+require `disk=auto`, `enrollment=none`, `access=console` and a channel of
+`canary` or `stable`, so a publisher cannot push an installer pinned to one
+disk, an ISO with a private enrollment key or an ISO with a shared `devops` key
+by mistake. `tools/publish-iso.sh` refuses an ISO without a version sidecar or
 whose target sidecar does not hold the ISO's own `sha256`. It writes
 `install.iso.sha256`, the checksums of the ISO and both sidecars, signs that
 file, and pushes the ISO, the checksum file, its signature bundle
 (`install.iso.sha256.sigstore.json`), the version and the target as one OCI
-artifact; only then does it move the ISO repository's `canary` when asked.
+artifact, tagged `<version>-<channel>` with the channel of the target sidecar;
+only then does it move that channel in the ISO repository when asked.
 
 `tools/pull-iso.sh` verifies, in this order: the signature of the checksum file
 against `GVPN_COSIGN_PUB`; that the checksum file lists the ISO, the version and
-the target; the checksum of each of the three; the target values above; and, for
-a version (not `canary`), that the signed version is the one asked for. An ISO,
-version or target that the key did not sign together is refused, which includes
-an older signed ISO re-pushed under a newer version. What it does not verify is
-the tag: `canary` can be pointed at any ISO that was published with the key, an
-older one included, so pull a version when that matters. The manifest annotation
-with the embedded image's ID is not signed and is only used by the publisher
-([CI](#ci)).
+the target; the checksum of each of the three; the target values above; that the
+signed channel is the one asked for; and, for a `<version>-<channel>`, that the
+signed version is the one asked for too. An ISO, version or target that the key
+did not sign together is refused, which includes an older signed ISO re-pushed
+under a newer version and a canary ISO served under `stable`. What it does not
+verify is which version a channel tag points at: `canary` can be pointed at any
+canary ISO that was published with the key, an older one included, so pull a
+`<version>-<channel>` when that matters. A reference with `@sha256:...` appended
+pulls that manifest and still checks it against the reference. The manifest
+annotation with the embedded image's ID is not signed, and nothing trusts it:
+the publisher compares the `image=` of the signed target ([CI](#ci)).
 
-`just tag-iso VERSION` pulls that version, verifies it the same way and only
-then moves the ISO repository's `canary`; the download is removed afterwards
+`just tag-iso VERSION CHANNEL` pulls the digest `<version>-<channel>` points at,
+verifies it the same way, checks that the image repository's channel serves the
+image its signed target records, and only then moves that channel in the ISO
+repository to that digest; the download is removed afterwards
 (`GVPN_ISO_VERIFY_DIR`, default `output/`).
 
 ## QEMU harness
@@ -351,13 +392,13 @@ managed network with DHCP. The integration phases take the guest address from
 QEMU's fixed forward, so they can run against the Incus VM with
 `VM_SSH_PORT=22`; re-resolve the address after a reboot if the lease changed.
 
-CI publishes a ready-to-install ISO to `GVPN_ISO_REPO` as `<version>`; after the
-matching image is promoted, `just tag-iso VERSION` also moves the ISO's
-`canary`. `just incus-install-published REF` pulls it, verifies its signature
-and installs it in one step; `just pull-iso REF` only fetches it. The published
-ISO has no bastion inputs and no SSH key; configure access on the VM console
-before provisioning ([Incus VM](incus.md#on-the-console)). A managed VM uses an
-ISO built with `just iso` and the four bastion inputs ([publishing](#ci)).
+A promotion publishes a ready-to-install ISO to `GVPN_ISO_REPO` as
+`<version>-<channel>` and moves the channel tag to it.
+`just incus-install-published REF` pulls it, verifies its signature and installs
+it in one step; `just pull-iso REF` only fetches it. The published ISO has no
+bastion inputs and no SSH key; configure access on the VM console before
+provisioning ([Incus VM](incus.md#on-the-console)). A managed VM uses an ISO
+built with `just iso` and the four bastion inputs ([publishing](#ci)).
 
 ### First-install rehearsal
 

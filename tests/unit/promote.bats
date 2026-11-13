@@ -16,6 +16,8 @@ setup() {
   write_public_key "${GVPN_COSIGN_PUB}"
   mock_cmd cosign
   write_skopeo
+  export GVPN_BUILDER="${MOCK_BIN}/builder"
+  mock_cmd builder
 }
 
 teardown() {
@@ -138,4 +140,52 @@ EOF
   [[ "${output}" == *"not a PEM public key"* ]]
   run grep -e '^cosign' -e '^skopeo' "${MOCK_LOG}"
   [ "${status}" -eq 1 ]
+}
+
+# The installer ISO of a promotion embeds the promoted image itself: it is
+# pulled by the digest whose signature verified and becomes the builder's
+# local image, the one the disk build reads.
+@test "--pull verifies a version and makes it the builder's local image" {
+  run "${PROMOTE}" --pull 1.2.3
+  echo "${output}"
+  [ "${status}" -eq 0 ]
+  grep -qx "cosign verify --key ${GVPN_COSIGN_PUB} --insecure-ignore-tlog=true ${REPO}@${DIGEST}" "${MOCK_LOG}"
+  grep -qx "builder podman pull ${REPO}@${DIGEST}" "${MOCK_LOG}"
+  grep -qx "builder podman tag ${REPO}@${DIGEST} localhost/gvpn-exit-os:dev" "${MOCK_LOG}"
+  verify_line="$(grep -n '^cosign verify' "${MOCK_LOG}" | cut -d: -f1)"
+  pull_line="$(grep -n '^builder podman pull' "${MOCK_LOG}" | cut -d: -f1)"
+  (( verify_line < pull_line ))
+  # Nothing in the registry moves.
+  run grep '^skopeo copy' "${MOCK_LOG}"
+  [ "${status}" -eq 1 ]
+}
+
+@test "--pull takes no image whose signature does not verify" {
+  mock_cmd cosign 'exit 1'
+  run "${PROMOTE}" --pull 1.2.3
+  [ "${status}" -ne 0 ]
+  [[ "${output}" == *"does not verify"* ]]
+  run grep '^builder' "${MOCK_LOG}"
+  [ "${status}" -eq 1 ]
+}
+
+@test "--pull needs a version" {
+  run "${PROMOTE}" --pull
+  [ "${status}" -ne 0 ]
+  [[ "${output}" == *"Usage"* ]]
+  run grep -e '^builder' -e '^cosign' "${MOCK_LOG}"
+  [ "${status}" -eq 1 ]
+}
+
+@test "the justfile pulls a promoted version as the image the disk build reads" {
+  mkdir -p "${SANDBOX}/tools"
+  cat > "${SANDBOX}/tools/promote.sh" <<SCRIPT
+#!/usr/bin/env bash
+printf '%s\n' "\${SOURCE_TAG}" "\$@" > "${SANDBOX}/argv"
+SCRIPT
+  chmod +x "${SANDBOX}/tools/promote.sh"
+  cp "${REPO_ROOT}/justfile" "${SANDBOX}/justfile"
+  run just --justfile "${SANDBOX}/justfile" pull-image 1.2.3
+  [ "${status}" -eq 0 ]
+  [ "$(cat "${SANDBOX}/argv")" = "$(printf '%s\n' localhost/gvpn-exit-os:dev --pull 1.2.3)" ]
 }

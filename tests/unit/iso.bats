@@ -223,6 +223,24 @@ teardown() {
   grep -q 'systemctl enable serial-getty@ttyS0.service' "${SANDBOX}/bib-config.toml"
 }
 
+# The channel the installed device follows is baked into the ISO, and the
+# target sidecar records it, so publishing can put the ISO under that channel.
+@test "the ISO records the channel its devices follow" {
+  unset GVPN_BASTION GVPN_SUPPORT_PORT GVPN_ENROLL_KEY GVPN_BASTION_KNOWN_HOSTS
+  run just --justfile "${WORK}/justfile" iso-console
+  [ "${status}" -eq 0 ]
+  [ "$(cat "${ORIGIN}")" = "${GVPN_IMAGE_REPO}:canary" ]
+  grep -qx 'channel=canary' "${WORK}/output/iso/install.iso.target"
+
+  run just --justfile "${WORK}/justfile" channel=stable iso-console-only
+  echo "${output}"
+  [ "${status}" -eq 0 ]
+  [ "$(cat "${ORIGIN}")" = "${GVPN_IMAGE_REPO}:stable" ]
+  grep -qx 'channel=stable' "${WORK}/output/iso/install.iso.target"
+  run grep -x 'channel=canary' "${WORK}/output/iso/install.iso.target"
+  [ "${status}" -eq 1 ]
+}
+
 @test "the Incus-only ISO recipes are gone" {
   run just --justfile "${WORK}/justfile" incus-iso
   [ "${status}" -ne 0 ]

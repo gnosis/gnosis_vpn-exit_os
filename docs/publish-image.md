@@ -90,39 +90,55 @@ registry before retrying.
 
 ## Publish the installer ISO
 
-The image workflow also builds the installer ISO for the same commit and pushes
-it as a signed OCI artifact to a repository of its own, `GVPN_ISO_REPO`, so an
-operator does not have to build one. The same ISO installs hardware and Incus
-VMs. It is published under the image's immutable `<version>`; the ISO
-repository's moving `canary` tag is moved separately with
-`just tag-iso VERSION`, after the matching image version was promoted to canary.
-From a workstation, after `just iso-console`:
+An installer ISO installs a device that follows one channel of the image
+repository for its updates, and that channel is written into the ISO when it is
+built (`just iso-console` for `canary`, `just channel=stable iso-console` for
+`stable`). It is published as a signed OCI artifact to a repository of its own,
+`GVPN_ISO_REPO`, under the immutable `<version>-<channel>` and the moving
+`<channel>`: the ISO under `stable` installs a device on `stable`. The **Promote
+Image** workflow builds and publishes it with every
+[promotion](#promotion-to-canary-or-stable), so an operator does not have to
+build one. The same ISO installs hardware and Incus VMs. From a workstation,
+after the image channel serves the image (`just publish` or `just promote`) and
+the ISO was built from that image (`just pull-image VERSION`, then
+`just channel=CHANNEL iso-console-only`):
 
 ```sh
+export GVPN_IMAGE_REPO='registry.example.org/fleet/gvpn-exit-os'
 export GVPN_ISO_REPO='registry.example.org/fleet/gvpn-exit-os-iso'
 export GVPN_COSIGN_KEY=/secure/path/cosign.key
 export GVPN_COSIGN_PUB=/secure/path/cosign.pub
 export GVPN_COSIGN_PASSPHRASE_FILE=/secure/path/cosign.passphrase
-nix develop -c just publish-iso       # <version> and canary in GVPN_ISO_REPO
-nix develop -c just push-iso          # only <version>
+nix develop -c just publish-iso       # <version>-<channel> and <channel> in GVPN_ISO_REPO
+nix develop -c just push-iso          # only <version>-<channel>
 ```
 
 `tools/publish-iso.sh` writes a checksum file over the ISO and its version and
 target sidecars, signs that file with the same key as the image, verifies the
 signature, pushes `install.iso`, the checksum file, its signature and the two
-sidecars, and only then moves the ISO repository's `canary`. The version is the
-one the ISO build recorded, the version label of the embedded image; an ISO
-whose sidecars are missing or were written for another ISO is refused.
-`GVPN_ISO` names another ISO file. A version is never overwritten, and
-`push-iso` refuses a version that is already published from another build.
-`just
-tag-iso VERSION` pulls and verifies that version against `GVPN_COSIGN_PUB`
-before it moves the ISO repository's `canary`. Pulling with
-`just pull-iso <version>` (or `canary` after it was tagged) verifies the
-signature and the checksums of the ISO, its version and its target before it
-prints the local path; see
-[first install](first-install.md#pull-the-published-iso) and
+sidecars, and only then moves the channel in the ISO repository. The version and
+the channel are the ones the ISO build recorded: the version label of the
+embedded image and the channel the installed device follows; an ISO whose
+sidecars are missing or were written for another ISO is refused, and so is an
+ISO whose embedded image `GVPN_IMAGE_REPO` does not serve under the channel
+(under the version for `push-iso`): a device installed from it would update away
+from the image it was installed with. `GVPN_ISO` names another ISO file. A
+`<version>-<channel>` is never overwritten: when it is published already from
+the same image, by its signed target, the channel moves to the published ISO
+after that verifies, and when it is published from another build, publishing
+stops. `just tag-iso VERSION CHANNEL` pulls and verifies `<version>-<channel>`
+against `GVPN_COSIGN_PUB`, and checks the image channel the same way, before it
+moves that channel in the ISO repository. Pulling with `just pull-iso canary`
+(or `stable`, or a `<version>-<channel>`) verifies the signature and the
+checksums of the ISO, its version and its target before it prints the local
+path; see [first install](first-install.md#pull-the-published-iso) and
 [what is verified](build.md#disk-images).
+
+An ISO published before the target recorded its channel, under a bare
+`<version>` or a `canary` that still points at one, does not pull: `pull-iso`
+refuses it. Promote the version each image channel serves once more to publish
+the ISO of that channel; `stable` exists in the ISO repository from the first
+promotion to `stable` on.
 
 The published ISO is unmanaged, picks its install disk at install time and
 carries no SSH key: the operator logs in on the console with the expired
@@ -130,8 +146,9 @@ temporary `devops` password, sets their own password and installs their public
 key
 ([first access on the console](local-access.md#first-access-on-the-console)).
 The publish refuses an ISO whose target sidecar is not `disk=auto`,
-`enrollment=none` and `access=console`. Build a per-device ISO locally when it
-needs bastion inputs or an installer key; a managed ISO is never published.
+`enrollment=none` and `access=console`, or names no channel. Build a per-device
+ISO locally when it needs bastion inputs or an installer key; a managed ISO is
+never published.
 
 ## Promotion to canary or stable
 
@@ -142,11 +159,18 @@ To promote a version to a channel:
 
 - Via GitHub Actions: run the **Promote Image** workflow manually
   (`workflow_dispatch`), specifying the `version` (commit short hash, version
-  tag, or digest) and target `channel` (`canary` or `stable`).
-- Via CLI:
+  tag, or digest) and target `channel` (`canary` or `stable`). It moves the
+  image channel and publishes the installer ISO that follows that channel.
+- Via CLI, the same steps in the same order:
   ```sh
-  nix develop -c just promote VERSION CHANNEL
+  nix develop -c just pull-image VERSION                 # verified, into the builder
+  nix develop -c just channel=CHANNEL iso-console-only   # the ISO of that channel
+  nix develop -c just promote VERSION CHANNEL            # move the image channel
+  nix develop -c just publish-iso                        # push the ISO, move its channel
   ```
+  The ISO is built before any tag moves, so a failed build leaves both channels
+  where they were. `just promote` alone moves the image channel and leaves the
+  ISO repository as it is.
 
 `tools/promote.sh` verifies the existing signature on the image against
 `GVPN_COSIGN_PUB` and updates the channel tag in the registry with

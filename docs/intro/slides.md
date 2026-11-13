@@ -477,15 +477,16 @@ PR ──► CI: just lint, just test, just check-pins, just build
  ▼ merge to main
 CI: build + just push   (signed <repo>:<version>, no channel moves)
  │
- ▼ manual "Promote Image" workflow
+ ▼ manual "Promote Image" workflow (moves the channel, publishes its ISO)
 just promote <version> canary   ──► soak ──►   just promote <version> stable
 ```
 
 - Versions are `git describe --tags --always --dirty` (short hashes today).
-- Merge also builds the installer ISO (unmanaged, console-configured, for
-  hardware and VMs) and publishes it signed as `<version>` in its own
-  repository; its canary tag moves with `tag-iso` after image promotion. PRs
-  build it but publish nothing.
+- A promotion also builds the installer ISO of that channel (unmanaged,
+  console-configured, for hardware and VMs) from the promoted image and
+  publishes it signed as `<version>-<channel>` and `<channel>` in its own
+  repository: the ISO under `stable` installs a device that follows `stable`.
+  Merges and PRs build an ISO as a check but publish none.
 - `promote` verifies the signature before copying the digest to a channel.
 - Canary devices stage a promotion within about two hours (hourly + up to 1 h
   jitter) and apply it in their next 03:00 window.

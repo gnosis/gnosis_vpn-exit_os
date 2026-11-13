@@ -181,33 +181,37 @@ tracks `<GVPN_IMAGE_REPO>:canary` unless built with `channel=stable`.
 
 _Unmanaged only._
 
-CI builds the installer on every merge to `main` and publishes it as a signed
-OCI artifact in a repository of its own (`GVPN_ISO_REPO`), under the image's
-immutable `<version>` tag; the ISO repository's `canary` moves after the
-matching image was promoted
-([publishing](publish-image.md#publish-the-installer-iso)). It is one ISO for
-both targets: unmanaged, console-configured and with the install disk picked at
-install time. A device installed from it tracks `<GVPN_IMAGE_REPO>:canary` and
-follows that tag wherever it points: there is no minimum-version floor. An ISO
-`<version>` that is newer than `canary`, which every merge build is until it is
-promoted, installs a device that then updates to the older canary image, a
-downgrade. Install the promoted ISO (`canary`, or the version `canary` points
-at) unless you mean to test an unpromoted build.
+Every promotion of an image version to a channel builds the installer of that
+channel and publishes it as a signed OCI artifact in a repository of its own
+(`GVPN_ISO_REPO`), under the immutable `<version>-<channel>` tag and the moving
+`<channel>` tag ([publishing](publish-image.md#publish-the-installer-iso)). It
+is one ISO for both targets: unmanaged, console-configured and with the install
+disk picked at install time. A device installed from it trusts images signed
+with the image-update key and follows the channel of its ISO for its updates:
+the ISO under `stable` installs a device that tracks `<GVPN_IMAGE_REPO>:stable`,
+the ISO under `canary` one that tracks `<GVPN_IMAGE_REPO>:canary`. The device
+follows that tag wherever it points: there is no minimum-version floor, so an
+ISO of a version newer than its channel now points at installs a device that
+then updates to the older image, a downgrade. Install the ISO a channel tag
+points at unless you mean otherwise.
 
 ```sh
 export GVPN_IMAGE_REPO='registry.example.org/fleet/gvpn-exit-os'
 export GVPN_ISO_REPO='registry.example.org/fleet/gvpn-exit-os-iso'
 export GVPN_COSIGN_PUB='/secure/path/cosign.pub'
-nix develop -c just pull-iso VERSION    # or canary
+nix develop -c just pull-iso stable    # or canary, or VERSION-CHANNEL
 ```
 
-Replace `VERSION` with the version printed by the merge build; use `canary` once
-the ISO repository's `canary` was moved to it. `pull-iso` downloads with `oras`
-into `output/published-iso/`, verifies the signature against `GVPN_COSIGN_PUB`
-and the checksums of the ISO, its version and its target, and prints the path of
-`install.iso`. A version is checked against the signed version of the artifact;
-`canary` is whatever signed ISO the tag points at. The registry must allow
-anonymous pulls (as it does for image updates) or accept your registry login.
+`stable` is the soaked release; `canary` gets every promoted build first; each
+exists once a version was promoted to it. A `VERSION-CHANNEL`, as printed by the
+promotion, names one ISO. `pull-iso` downloads with `oras` into
+`output/published-iso/`, verifies the signature against `GVPN_COSIGN_PUB` and
+the checksums of the ISO, its version and its target, and prints the path of
+`install.iso`. The channel is checked against the signed channel of the
+artifact, and a `VERSION-CHANNEL` also against its signed version; under a
+channel tag the version is whatever signed ISO of that channel the tag points
+at. The registry must allow anonymous pulls (as it does for image updates) or
+accept your registry login.
 
 Without this repository or `oras`, `curl`, `jq`, `openssl` and `sha256sum` do
 the same. Each file of the artifact is a layer named after it. The signature in
@@ -219,7 +223,7 @@ public repository.
 
 ```sh
 REPO='registry.example.org/fleet/gvpn-exit-os-iso'  # GVPN_ISO_REPO
-TAG='VERSION'                                       # or canary
+TAG='stable'                                        # or canary, or VERSION-CHANNEL
 H="https://${REPO%%/*}" N="${REPO#*/}"
 curl -fsS -H 'Accept: application/vnd.oci.image.manifest.v1+json' \
   "${H}/v2/${N}/manifests/${TAG}" > manifest.json
@@ -236,12 +240,13 @@ openssl dgst -sha256 -verify /secure/path/cosign.pub -signature install.iso.sha2
 # the signed list names exactly the ISO and both sidecars, and they match it
 awk '{ print $2 }' install.iso.sha256 | sort | paste -sd' '   # install.iso install.iso.target install.iso.version
 sha256sum -c --strict install.iso.sha256
-# what the signed sidecars say: the version, and disk=auto, enrollment=none, access=console
+# what the signed sidecars say: the version, and disk=auto, enrollment=none,
+# access=console and the channel the device follows (channel=, the one in TAG)
 cat install.iso.version install.iso.target
 ```
 
 Check the last three outputs by eye: `just pull-iso` refuses an ISO whose list
-or target differs, and a version that is not the one asked for.
+or target differs, and a version or channel that is not the one asked for.
 
 ### Put it on the device
 

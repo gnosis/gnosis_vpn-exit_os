@@ -20,13 +20,11 @@ Unbuilt features, acceptance gaps and open decisions. Current behaviour is in
   `just
   iso-console-only` on every PR. On PR merged into `main`, the image is
   built and pushed to the remote repository signed, without moving channel tags
-  (`just
-  push`), and the installer ISO is published as a signed OCI artifact
-  under the image's `<version>` in its own repository; its channel tag moves
-  with `just tag-iso VERSION` after the image is promoted. A manual workflow
-  (`just promote VERSION CHANNEL`) promotes a verified version to `canary` or
-  `stable`. Release CI will add QEMU integration and snapshot/restore
-  acceptance.
+  (`just push`). A manual workflow promotes a verified version to `canary` or
+  `stable` (`just promote VERSION CHANNEL`) and publishes the installer ISO that
+  follows that channel, built from the promoted image, as a signed OCI artifact
+  under `<version>-<channel>` and the channel tag in its own repository. Release
+  CI will add QEMU integration and snapshot/restore acceptance.
 - Release gate: `publish.sh` and `publish-iso.sh` refuse `-dirty` versions, but
   `git describe --dirty` ignores untracked files that the build context
   includes. Refuse those too, add `org.opencontainers.image.revision` and
