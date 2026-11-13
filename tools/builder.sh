@@ -44,7 +44,8 @@ mkdir -p "${REPO_ROOT}/output"
 # The image-update public key may live anywhere on this host; pass its content
 # into the container, which only mounts the repository.
 env_args=(-e HOST_UID="$(id -u)" -e HOST_GID="$(id -g)"
-  -e GVPN_IMAGE_VERSION -e SOURCE_TAG -e GVPN_IMAGE_REPO -e GVPN_COSIGN_PUB_B64)
+  -e GVPN_IMAGE_VERSION -e SOURCE_TAG -e GVPN_IMAGE_REPO -e GVPN_COSIGN_PUB_B64
+  -e CONTAINERS_STORAGE_CONF=/src/tools/builder-storage.conf)
 if [[ -z "${GVPN_COSIGN_PUB_B64:-}" && -n "${GVPN_COSIGN_PUB:-}" ]]; then
   require_public_key "${GVPN_COSIGN_PUB}" || exit 1
   env_args+=(-e GVPN_COSIGN_PUB_B64="$(base64_one_line "${GVPN_COSIGN_PUB}")")
