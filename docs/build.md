@@ -152,8 +152,19 @@ The installer ISO also reads:
 ## CI
 
 `.github/workflows/` builds on every pull request, pushes a signed image on
-every merge to `main`, and promotes manually. The workflows talk to any
-container registry; point them at yours with repository settings:
+every merge to `main`, and promotes manually. The release workflows push to
+Google Artifact Registry and log in through Workload Identity Federation: GitHub
+hands the job an OIDC token, the `gnosisvpn-gh-pool` provider in
+`gnosisvpn-production` exchanges it for the
+`download-gnosisvpn-gh-sa@gnosisvpn-production.iam.gserviceaccount.com` service
+account, and its access token logs Docker in as `oauth2accesstoken`. No registry
+credential is stored in GitHub. That service account needs a
+`roles/iam.workloadIdentityUser` binding for this repository's
+`attribute.repository` principal set and `roles/artifactregistry.writer` on the
+repositories below. That binding trusts every workflow run in the repository,
+not only the `release` environment, so push access is not the control: devices
+accept only images signed with the key below. Point the workflows at the
+repositories with repository settings:
 
 | Kind     | Name                     | Value                                                                                                                                               |
 | -------- | ------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -162,22 +173,20 @@ container registry; point them at yours with repository settings:
 | variable | `GVPN_COSIGN_PUB`        | public half of the image-update key pair, `BEGIN PUBLIC KEY` block and all                                                                          |
 | secret   | `GVPN_COSIGN_KEY`        | private half of the same pair                                                                                                                       |
 | secret   | `GVPN_COSIGN_PASSPHRASE` | its passphrase, if it has one                                                                                                                       |
-| secret   | `GVPN_REGISTRY_USER`     | a registry account or robot that may push                                                                                                           |
-| secret   | `GVPN_REGISTRY_PASSWORD` | its password or token                                                                                                                               |
 
-The signing key, its passphrase and the registry credentials belong to a GitHub
-environment named `release`: create it in the repository settings, restrict its
-deployment branches to `main` and add required reviewers. That branch
-restriction is what keeps a release to `main`: the workflows also check
-`github.ref` themselves, but a dispatch from another branch runs that branch's
-copy of the workflow, so the in-job check is a convenience and not the control.
-GitHub creates an environment named `release` on first use if it does not exist,
-and that one has no restrictions, so create and restrict it before the secrets
-are added. Store the key there and not at repository level, because a repository
-secret is readable by any workflow run in the repository, including one from an
-unreviewed branch; a signing key in that place lets anyone who can push a branch
-sign an image every device accepts. Whoever can run the release workflow can
-sign, so the environment's reviewers and their accounts are the protection.
+The signing key and its passphrase belong to a GitHub environment named
+`release`: create it in the repository settings, restrict its deployment
+branches to `main` and add required reviewers. That branch restriction is what
+keeps a release to `main`: the workflows also check `github.ref` themselves, but
+a dispatch from another branch runs that branch's copy of the workflow, so the
+in-job check is a convenience and not the control. GitHub creates an environment
+named `release` on first use if it does not exist, and that one has no
+restrictions, so create and restrict it before the secrets are added. Store the
+key there and not at repository level, because a repository secret is readable
+by any workflow run in the repository, including one from an unreviewed branch;
+a signing key in that place lets anyone who can push a branch sign an image
+every device accepts. Whoever can run the release workflow can sign, so the
+environment's reviewers and their accounts are the protection.
 
 The merge workflow also builds the installer ISO and publishes it as a signed
 OCI artifact next to the image (or in `GVPN_ISO_REPO`, when that is set) as an

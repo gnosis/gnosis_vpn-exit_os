@@ -28,9 +28,13 @@ jobs:
   promote:
     name: Promote
     runs-on: depot-ubuntu-22.04-4
-    # The registry credentials are environment secrets: an environment can
-    # restrict them to a branch and require reviewers, which a repository
-    # secret cannot.
+    # id-token lets the job ask GitHub for the OIDC token that Google Cloud
+    # exchanges for registry access.
+    permissions:
+      contents: read
+      id-token: write
+    # The environment restricts promotion to a branch and can require
+    # reviewers.
     environment: release
     steps:
       # A convenience check, not the control: a dispatch from another branch
@@ -56,19 +60,21 @@ jobs:
           extra_nix_config: |
             experimental-features = nix-command flakes
 
-      # Any registry works: set GVPN_REGISTRY_USER and GVPN_REGISTRY_PASSWORD
-      # for the host in GVPN_IMAGE_REPO.
+      # Google Artifact Registry is reached through Workload Identity
+      # Federation, so no registry credential is stored.
+      - name: Authenticate to Google Cloud
+        id: gcp
+        uses: hoprnet/hopr-workflows/actions/setup-gcp@837b94246698537325ecc664dfb22c72c0d6b8ed # setup-gcp-v4
+        with:
+          workload_identity_provider: projects/656686060169/locations/global/workloadIdentityPools/gnosisvpn-gh-pool/providers/github-provider
+          service_account: download-gnosisvpn-gh-sa@gnosisvpn-production.iam.gserviceaccount.com
+
       - name: Log in to the registry
         env:
-          REGISTRY_USER: ${{ secrets.GVPN_REGISTRY_USER }}
-          REGISTRY_PASSWORD: ${{ secrets.GVPN_REGISTRY_PASSWORD }}
+          ACCESS_TOKEN: ${{ steps.gcp.outputs.access_token }}
         run: |
-          if [[ -z "${REGISTRY_USER:-}" || -z "${REGISTRY_PASSWORD:-}" ]]; then
-            echo "::error::Set the GVPN_REGISTRY_USER and GVPN_REGISTRY_PASSWORD secrets for ${GVPN_IMAGE_REPO%%/*}"
-            exit 1
-          fi
-          printf '%s' "${REGISTRY_PASSWORD}" \
-            | docker login "${GVPN_IMAGE_REPO%%/*}" --username "${REGISTRY_USER}" --password-stdin
+          printf '%s' "${ACCESS_TOKEN}" \
+            | docker login "${GVPN_IMAGE_REPO%%/*}" --username oauth2accesstoken --password-stdin
           echo "REGISTRY_AUTH_FILE=${DOCKER_CONFIG:-${HOME}/.docker}/config.json" >> "${GITHUB_ENV}"
 
       - name: Write the image-update public key
