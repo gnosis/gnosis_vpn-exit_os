@@ -102,20 +102,30 @@ EOF
 # Take LOCKFILE exclusively in a background process and keep it until
 # release_lock, so a test can prove that a mutation waits for the lock instead
 # of racing it. The holder gives up after 20 s, so a failing test leaks nothing.
-# Its output is discarded and fd 3, the pipe bats captures test output on, is
-# closed: a test that fails before release_lock would otherwise make the runner
-# wait for the holder.
+# Its output goes to a file in the sandbox and fd 3, the pipe bats captures test
+# output on, is closed: a test that fails before release_lock would otherwise
+# make the runner wait for the holder. A holder that dies or has not taken the
+# lock within 5 s fails the calling test with its error instead of hanging it.
 hold_lock() {
   local lock="$1" ready="${SANDBOX}/lock.held" release="${SANDBOX}/lock.release"
+  local log="${SANDBOX}/lock.log" deadline=$((SECONDS + 5))
   rm -f "${ready}" "${release}"
-  flock -x "${lock}" -c "
+  # bash -c, not flock -c: that runs ${SHELL}, which is fish for some of us.
+  flock -x "${lock}" bash -c "
     touch '${ready}'
     for _ in \$(seq 1 400); do
       [[ -e '${release}' ]] && exit 0
       sleep 0.05
-    done" >/dev/null 2>&1 3>&- &
+    done" >/dev/null 2>"${log}" 3>&- &
   LOCK_HOLDER=$!
-  while [[ ! -e "${ready}" ]]; do sleep 0.02; done
+  while [[ ! -e "${ready}" ]]; do
+    if ! kill -0 "${LOCK_HOLDER}" 2>/dev/null || (( SECONDS >= deadline )); then
+      kill "${LOCK_HOLDER}" 2>/dev/null || true
+      echo "lock holder could not take ${lock}: $(cat "${log}")" >&2
+      return 1
+    fi
+    sleep 0.02
+  done
 }
 
 release_lock() {
