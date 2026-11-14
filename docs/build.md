@@ -121,7 +121,8 @@ environment ([CI](#ci)).
 `image/build/configure-image.sh` renders it into `/etc/containers/policy.json`;
 the `example.org` value in the checked-in files is a placeholder that stays
 untouched. Changing `GVPN_IMAGE_REPO` does not move existing devices; that needs
-a planned origin and trust migration.
+a planned origin and trust migration on each device
+([switch registry runbook](switch-registry.md)).
 
 Devices pull their updates without credentials: nothing in the image carries a
 registry login, so the repository in `GVPN_IMAGE_REPO` must allow anonymous

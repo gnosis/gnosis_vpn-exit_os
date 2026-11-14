@@ -36,6 +36,7 @@ your own key before provisioning
 | Install the ISO into an Incus VM          | [Incus VM](docs/incus.md)                    |
 | Publish a canary update                   | [Publish runbook](docs/publish-image.md)     |
 | Move an installed v4 node to v5           | [hoprd v4 to v5](docs/hoprd-v5-migration.md) |
+| Move a device to another image repository | [Switch registry](docs/switch-registry.md)   |
 | Get back into a device that lost its keys | [Recovery stick](docs/recovery.md)           |
 | Understand runtime behaviour              | [Architecture](docs/architecture.md)         |
 | Check gaps and planned work               | [Roadmap](docs/roadmap.md)                   |
