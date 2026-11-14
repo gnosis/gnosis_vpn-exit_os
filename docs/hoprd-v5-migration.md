@@ -42,6 +42,10 @@ helper has written the v5 file.
   the funds to an address nobody controls. `cast to-check-sum-address 0x...`
   prints the checksum form of an address; compare its output with the source you
   copied the address from.
+- The Blokli URL of the v5 network, https://blokli.piz-palu.gnosisvpn.io for
+  `piz-palu-prod` (`--blokli-url`). The v4 provisioning file names the v4
+  network's Blokli, which does not index the new Safe, so the helper never takes
+  it for v5 and refuses to start without the option until the v5 file exists.
 - Optional: the wxHOPR token address if the deployment is not the Gnosis
   production token (`--hopr-token`).
 
@@ -58,12 +62,13 @@ and module pair, and says so.
 `sudo gvpn-exit-hoprd-migrate migrate --safe-address 0xNEW \
   --module-address 0xNEWMODULE --provider-url-file FILE \
   --safe-owner-keystore FILE --safe-owner-password-file FILE \
-  [--blokli-url https://...] [--forfeit-tickets] [--native] \
+  --blokli-url https://... [--forfeit-tickets] [--native] \
   [--v4-start-timeout SECONDS] [--v4-blokli-url https://...] \
   [--skip-v4-cleanup]`
 
 Before it changes anything, the helper takes the OS update lock and checks the
-owner key, the RPC endpoint, the new Safe and the Safe and module pair. Then it:
+Blokli URL, the owner key, the RPC endpoint, the new Safe and the Safe and
+module pair. Then it:
 
 1. stops `hoprd.service`;
 2. decrypts the sealed v4 identity, password and API token into a private `/run`
@@ -144,8 +149,10 @@ sudo gvpn-exit-hoprd-migrate migrate \
   --blokli-url https://blokli.piz-palu.gnosisvpn.io
 ```
 
-`--blokli-url` defaults to the URL the device already runs with (the v5 file on
-a rerun, else the old v4 file), so pass it only when you want to change it.
+`--blokli-url` is required until the v5 file exists; without it the helper stops
+before it changes anything. A later run without the option keeps the URL the v5
+file carries. The v4 file's URL is never used for v5: it names the v4 network's
+Blokli, where hoprd v5 does not find the new Safe.
 
 The helper takes at least seven minutes: 30 s for the v4 node to load its
 channels, the 330 s closure wait and the 60 s watch of hoprd, plus the time the
@@ -163,7 +170,8 @@ sudo systemd-run --unit=gvpn-hoprd-migrate --collect \
   --module-address 0xNEWMODULE \
   --provider-url-file /root/gnosis-rpc.url \
   --safe-owner-keystore /root/keystores/old-safe-owner \
-  --safe-owner-password-file /root/old-safe-owner.password
+  --safe-owner-password-file /root/old-safe-owner.password \
+  --blokli-url https://blokli.piz-palu.gnosisvpn.io
 sudo journalctl -fu gvpn-hoprd-migrate
 ```
 
@@ -227,6 +235,7 @@ sudo gvpn-exit-hoprd-migrate migrate \
   --provider-url-file /root/gnosis-rpc.url \
   --safe-owner-keystore /root/keystores/old-safe-owner \
   --safe-owner-password-file /root/old-safe-owner.password \
+  --blokli-url https://blokli.piz-palu.gnosisvpn.io \
   --skip-v4-cleanup
 ```
 
@@ -246,7 +255,8 @@ Use the separate steps:
 2. move the old Safe's wxHOPR to the new Safe with the owners, in the Safe
    interface;
 3. `sudo gvpn-exit-hoprd-migrate configure-v5 --safe-address 0xNEWSAFE
-   --module-address 0xNEWMODULE --provider-url-file /root/gnosis-rpc.url`.
+   --module-address 0xNEWMODULE --provider-url-file /root/gnosis-rpc.url
+   --blokli-url https://blokli.piz-palu.gnosisvpn.io`.
 
 ## If you want separate steps
 
@@ -265,17 +275,19 @@ sudo gvpn-exit-hoprd-migrate move-v4-safe-funds --to 0xNEWSAFE \
   --safe-owner-keystore /root/keystores/old-safe-owner \
   --safe-owner-password-file /root/old-safe-owner.password [--native]
 sudo gvpn-exit-hoprd-migrate configure-v5 \
-  --safe-address 0xNEWSAFE --module-address 0xNEWMODULE [--blokli-url https://...] \
+  --safe-address 0xNEWSAFE --module-address 0xNEWMODULE \
+  --blokli-url https://blokli.piz-palu.gnosisvpn.io \
   [--provider-url-file /root/gnosis-rpc.url]
 ```
 
 `configure-v5` alone does not need the v4 database or credentials; it is the
-step to use when only the Safe/module configuration needs correcting. With
-`--provider-url-file` it checks on the chain that the module is enabled on the
-Safe and includes this node before it writes anything; without it the pair is
-not checked and the helper says so. It stops and starts `hoprd.service` so the
-running daemon picks up the new values, and fails when hoprd does not stay up
-for 60 s.
+step to use when only the Safe/module configuration needs correcting. Like
+`migrate`, it needs `--blokli-url` until the v5 file exists and keeps the v5
+file's URL when the option is left out later. With `--provider-url-file` it
+checks on the chain that the module is enabled on the Safe and includes this
+node before it writes anything; without it the pair is not checked and the
+helper says so. It stops and starts `hoprd.service` so the running daemon picks
+up the new values, and fails when hoprd does not stay up for 60 s.
 
 ## Check the result
 

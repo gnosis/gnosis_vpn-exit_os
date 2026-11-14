@@ -12,6 +12,7 @@ NEW_SAFE="0x3333333333333333333333333333333333333333"
 NEW_MODULE="0x4444444444444444444444444444444444444444"
 NODE="0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 BLOKLI="https://blokli.example.org"
+V4_BLOKLI="https://blokli-v4.example.org"
 
 setup() {
   setup_sandbox
@@ -52,7 +53,7 @@ setup() {
   printf 'password' > "${GVPN_CREDS_DIR}/hoprd.password.cred"
   printf 'token' > "${GVPN_CREDS_DIR}/hoprd.api-token.cred"
   printf 'HOPRD_SAFE_ADDRESS=%s\nHOPRD_MODULE_ADDRESS=%s\nHOPRD_BLOKLI_URL=%s\n' \
-    "${OLD_SAFE}" "${OLD_MODULE}" "${BLOKLI}" > "${SANDBOX}/old.env"
+    "${OLD_SAFE}" "${OLD_MODULE}" "${V4_BLOKLI}" > "${SANDBOX}/old.env"
   mkdir -p "${GVPN_HOPRD_V4_ENV_DIR}"
   cp "${SANDBOX}/old.env" "${GVPN_HOPRD_V4_ENV_DIR}/10-provisioned.env"
   printf '{"node_address":"%s","safe_address":"%s","module_address":"%s"}\n' \
@@ -146,7 +147,7 @@ refute_logged() {
 }
 
 @test "migrate closes v4 channels, moves the old Safe funds and writes the v5 file" {
-  run "${MIGRATE}" migrate --safe-address "${NEW_SAFE}" --module-address "${NEW_MODULE}" --wait 0
+  run "${MIGRATE}" migrate --safe-address "${NEW_SAFE}" --module-address "${NEW_MODULE}" --blokli-url "${BLOKLI}" --wait 0
   [ "${status}" -eq 0 ]
   [ "$(cat "${GVPN_HOPRD_ENV_DIR}/10-provisioned.env")" = "$(printf 'HOPRD_SAFE_ADDRESS=%s\nHOPRD_MODULE_ADDRESS=%s\nHOPRD_BLOKLI_URL=%s' "${NEW_SAFE}" "${NEW_MODULE}" "${BLOKLI}")" ]
   [ "$(stat -c %a "${GVPN_HOPRD_ENV_DIR}/10-provisioned.env")" = "600" ]
@@ -164,15 +165,40 @@ refute_logged() {
   [ "$(grep -c 'X DELETE' "${MOCK_LOG}")" -eq 1 ]
   grep -q 'X DELETE .*/channels/0xaaaa$' "${MOCK_LOG}"
   refute_logged 'direction=incoming'
-  # The v4 node ran on the old data and on the decrypted copy in the work dir.
+  # The v4 node ran on the old data and on the decrypted copy in the work dir,
+  # against the v4 network's Blokli; the v5 file names the v5 network's.
   grep -q "hoprd-v4 .*--data ${GVPN_HOPRD_V4_DATA} .*--identity ${SANDBOX}/gvpn-exit-migrate" "${MOCK_LOG}"
+  grep -q "^hoprd-v4 .*--blokliUrl ${V4_BLOKLI}$" "${MOCK_LOG}"
   # The sealed v4 credentials and the old provisioning file are untouched.
   [ "$(cat "${GVPN_CREDS_DIR}/hopr.id.cred")" = "identity" ]
   [ "$(cat "${GVPN_HOPRD_V4_ENV_DIR}/10-provisioned.env")" = "$(cat "${SANDBOX}/old.env")" ]
 }
 
-@test "a later configure keeps the Blokli URL the device already uses" {
+# The v4 provisioning file names the v4 network's Blokli, where the new Safe
+# does not exist: a v5 node pointed at it does not run, and migrate would only
+# find that out after the channels closed and the funds moved.
+@test "migrate needs --blokli-url until the v5 file exists and stops nothing without it" {
   run "${MIGRATE}" migrate --safe-address "${NEW_SAFE}" --module-address "${NEW_MODULE}" --wait 0
+  [ "${status}" -ne 0 ]
+  [[ "${output}" == *"--blokli-url is required"* ]]
+  [[ "${output}" == *"https://blokli.piz-palu.gnosisvpn.io"* ]]
+  refute_logged 'systemctl stop'
+  refute_logged '^hoprd-v4 '
+  refute_logged '^cast send '
+  [ ! -e "${GVPN_HOPRD_ENV_DIR}/10-provisioned.env" ]
+}
+
+@test "configure-v5 needs --blokli-url until the v5 file exists and stops nothing without it" {
+  run "${MIGRATE}" configure-v5 --safe-address "${NEW_SAFE}" --module-address "${NEW_MODULE}"
+  [ "${status}" -ne 0 ]
+  [[ "${output}" == *"--blokli-url is required"* ]]
+  refute_logged 'systemctl stop'
+  [ ! -e "${GVPN_HOPRD_ENV_DIR}/10-provisioned.env" ]
+  [ "$(cat "${GVPN_PROVISIONING_JSON}")" = "$(printf '{"node_address":"%s","safe_address":"%s","module_address":"%s"}' "${NODE}" "${OLD_SAFE}" "${OLD_MODULE}")" ]
+}
+
+@test "a later configure keeps the Blokli URL the device already uses" {
+  run "${MIGRATE}" migrate --safe-address "${NEW_SAFE}" --module-address "${NEW_MODULE}" --blokli-url "${BLOKLI}" --wait 0
   [ "${status}" -eq 0 ]
   run "${MIGRATE}" configure-v5 --safe-address "${NEW_SAFE}" --module-address "${NEW_MODULE}"
   [ "${status}" -eq 0 ]
@@ -180,7 +206,7 @@ refute_logged() {
 }
 
 @test "the native balance moves only when --native is given" {
-  run "${MIGRATE}" migrate --safe-address "${NEW_SAFE}" --module-address "${NEW_MODULE}" --native --wait 0
+  run "${MIGRATE}" migrate --safe-address "${NEW_SAFE}" --module-address "${NEW_MODULE}" --blokli-url "${BLOKLI}" --native --wait 0
   [ "${status}" -eq 0 ]
   [ "$(grep -c '^cast send ' "${MOCK_LOG}")" -eq 2 ]
   [[ "${output}" == *"moved 200000000000000000 wei xDai"* ]]
@@ -203,7 +229,7 @@ refute_logged() {
 }
 
 @test "an invalid new Safe address fails before anything is stopped or moved" {
-  run "${MIGRATE}" migrate --safe-address 0xnot-an-address --module-address "${NEW_MODULE}" --wait 0
+  run "${MIGRATE}" migrate --safe-address 0xnot-an-address --module-address "${NEW_MODULE}" --blokli-url "${BLOKLI}" --wait 0
   [ "${status}" -ne 0 ]
   [[ "${output}" == *"--safe-address"* ]]
   refute_logged 'systemctl stop'
@@ -245,7 +271,7 @@ refute_logged() {
       send\ *) exit 1 ;;
       *) exit 1 ;;
     esac'
-  run "${MIGRATE}" migrate --safe-address "${NEW_SAFE}" --module-address "${NEW_MODULE}" --wait 0
+  run "${MIGRATE}" migrate --safe-address "${NEW_SAFE}" --module-address "${NEW_MODULE}" --blokli-url "${BLOKLI}" --wait 0
   [ "${status}" -ne 0 ]
   grep -q 'systemctl start hoprd.service' "${MOCK_LOG}"
   [ ! -e "${GVPN_HOPRD_ENV_DIR}/10-provisioned.env" ]
@@ -321,7 +347,7 @@ mock_two_phase_curl() {
 @test "a channel still pending closure fails the run, restarts hoprd and moves nothing" {
   mock_two_phase_curl
   export FINALIZE_NEVER=1
-  run "${MIGRATE}" migrate --safe-address "${NEW_SAFE}" --module-address "${NEW_MODULE}" --wait 0
+  run "${MIGRATE}" migrate --safe-address "${NEW_SAFE}" --module-address "${NEW_MODULE}" --blokli-url "${BLOKLI}" --wait 0
   [ "${status}" -ne 0 ]
   [[ "${output}" == *"outgoing 0xaaaa PendingToClose"* ]]
   [[ "${output}" == *"still open or pending closure"* ]]
@@ -363,7 +389,7 @@ mock_two_phase_curl() {
 
 @test "unredeemed tickets stop the run before any channel is closed" {
   echo '{"unredeemedValue":"2 wxHOPR"}' > "${SANDBOX}/stats.json"
-  run "${MIGRATE}" migrate --safe-address "${NEW_SAFE}" --module-address "${NEW_MODULE}" --wait 0
+  run "${MIGRATE}" migrate --safe-address "${NEW_SAFE}" --module-address "${NEW_MODULE}" --blokli-url "${BLOKLI}" --wait 0
   [ "${status}" -ne 0 ]
   [[ "${output}" == *"2 wxHOPR"* ]]
   [[ "${output}" == *"--forfeit-tickets"* ]]
@@ -384,7 +410,7 @@ mock_two_phase_curl() {
 
 @test "a multi-owner old Safe is refused before hoprd is stopped" {
   mock_cmd cast 'case "$*" in *"getThreshold()(uint256)"*) echo 2 ;; *) exit 1 ;; esac'
-  run "${MIGRATE}" migrate --safe-address "${NEW_SAFE}" --module-address "${NEW_MODULE}" --wait 0
+  run "${MIGRATE}" migrate --safe-address "${NEW_SAFE}" --module-address "${NEW_MODULE}" --blokli-url "${BLOKLI}" --wait 0
   [ "${status}" -ne 0 ]
   [[ "${output}" == *"threshold is 2"* ]]
   refute_logged 'systemctl stop'
@@ -398,7 +424,7 @@ mock_two_phase_curl() {
       *"isOwner(address)(bool)"*) echo false ;;
       *) exit 1 ;;
     esac'
-  run "${MIGRATE}" migrate --safe-address "${NEW_SAFE}" --module-address "${NEW_MODULE}" --wait 0
+  run "${MIGRATE}" migrate --safe-address "${NEW_SAFE}" --module-address "${NEW_MODULE}" --blokli-url "${BLOKLI}" --wait 0
   [ "${status}" -ne 0 ]
   [[ "${output}" == *"0xowner is not an owner of the old Safe"* ]]
   refute_logged 'systemctl stop'
@@ -406,7 +432,7 @@ mock_two_phase_curl() {
 
 @test "an owner without xDai for gas is refused before hoprd is stopped" {
   export OWNER_XDAI=0
-  run "${MIGRATE}" migrate --safe-address "${NEW_SAFE}" --module-address "${NEW_MODULE}" --wait 0
+  run "${MIGRATE}" migrate --safe-address "${NEW_SAFE}" --module-address "${NEW_MODULE}" --blokli-url "${BLOKLI}" --wait 0
   [ "${status}" -ne 0 ]
   [[ "${output}" == *"has no xDai"* ]]
   refute_logged 'systemctl stop'
@@ -414,7 +440,7 @@ mock_two_phase_curl() {
 
 @test "a signature with recovery id 0 is sent with v 27" {
   export SIGNATURE_V=00
-  run "${MIGRATE}" migrate --safe-address "${NEW_SAFE}" --module-address "${NEW_MODULE}" --wait 0
+  run "${MIGRATE}" migrate --safe-address "${NEW_SAFE}" --module-address "${NEW_MODULE}" --blokli-url "${BLOKLI}" --wait 0
   [ "${status}" -eq 0 ]
   grep -qE '^cast send .* 0x(ab){64}1b ' "${MOCK_LOG}"
 }
@@ -422,7 +448,7 @@ mock_two_phase_curl() {
 @test "a rerun after the funds moved sends nothing and writes the configuration" {
   touch "${SANDBOX}/deleted"
   echo 0 > "${SANDBOX}/token-balance"
-  run "${MIGRATE}" migrate --safe-address "${NEW_SAFE}" --module-address "${NEW_MODULE}" --wait 0
+  run "${MIGRATE}" migrate --safe-address "${NEW_SAFE}" --module-address "${NEW_MODULE}" --blokli-url "${BLOKLI}" --wait 0
   [ "${status}" -eq 0 ]
   [[ "${output}" == *"no wxHOPR left to move"* ]]
   refute_logged 'X DELETE'
@@ -432,14 +458,14 @@ mock_two_phase_curl() {
 
 @test "a transfer that leaves the balance in the old Safe fails before v5 is configured" {
   export SEND_MOVES_NOTHING=1
-  run "${MIGRATE}" migrate --safe-address "${NEW_SAFE}" --module-address "${NEW_MODULE}" --wait 0
+  run "${MIGRATE}" migrate --safe-address "${NEW_SAFE}" --module-address "${NEW_MODULE}" --blokli-url "${BLOKLI}" --wait 0
   [ "${status}" -ne 0 ]
   [[ "${output}" == *"still holds 7000000000000000000 wei wxHOPR"* ]]
   [ ! -e "${GVPN_HOPRD_ENV_DIR}/10-provisioned.env" ]
 }
 
 @test "the owner signs from the keystore, so no key is in any cast command line" {
-  run "${MIGRATE}" migrate --safe-address "${NEW_SAFE}" --module-address "${NEW_MODULE}" --wait 0
+  run "${MIGRATE}" migrate --safe-address "${NEW_SAFE}" --module-address "${NEW_MODULE}" --blokli-url "${BLOKLI}" --wait 0
   [ "${status}" -eq 0 ]
   refute_logged -- '--private-key'
   grep -q "^cast wallet address --keystore ${SANDBOX}/owner.keystore --password-file ${SANDBOX}/owner.password" "${MOCK_LOG}"
@@ -458,7 +484,7 @@ mock_two_phase_curl() {
 
 @test "a keystore without its password file is refused" {
   unset GVPN_SAFE_OWNER_PASSWORD_FILE
-  run "${MIGRATE}" migrate --safe-address "${NEW_SAFE}" --module-address "${NEW_MODULE}" --wait 0
+  run "${MIGRATE}" migrate --safe-address "${NEW_SAFE}" --module-address "${NEW_MODULE}" --blokli-url "${BLOKLI}" --wait 0
   [ "${status}" -ne 0 ]
   [[ "${output}" == *"--safe-owner-password-file"* ]]
   refute_logged 'systemctl stop'
@@ -466,7 +492,7 @@ mock_two_phase_curl() {
 
 @test "a missing keystore is refused with the option that names it" {
   unset GVPN_SAFE_OWNER_KEYSTORE
-  run "${MIGRATE}" migrate --safe-address "${NEW_SAFE}" --module-address "${NEW_MODULE}" --wait 0
+  run "${MIGRATE}" migrate --safe-address "${NEW_SAFE}" --module-address "${NEW_MODULE}" --blokli-url "${BLOKLI}" --wait 0
   [ "${status}" -ne 0 ]
   [[ "${output}" == *"--safe-owner-keystore"* ]]
   refute_logged 'systemctl stop'
@@ -489,7 +515,7 @@ mock_two_phase_curl() {
 
 @test "a target Safe that is not in checksum form is refused before hoprd is stopped" {
   export CHECKSUM_FORM="0x3333333333333333333333333333333333333334"
-  run "${MIGRATE}" migrate --safe-address "${NEW_SAFE}" --module-address "${NEW_MODULE}" --wait 0
+  run "${MIGRATE}" migrate --safe-address "${NEW_SAFE}" --module-address "${NEW_MODULE}" --blokli-url "${BLOKLI}" --wait 0
   [ "${status}" -ne 0 ]
   [[ "${output}" == *"EIP-55"* ]]
   [[ "${output}" == *"cast to-check-sum-address"* ]]
@@ -503,7 +529,7 @@ mock_two_phase_curl() {
 
 @test "a target without contract code is refused before hoprd is stopped" {
   export TARGET_CODE=0x
-  run "${MIGRATE}" migrate --safe-address "${NEW_SAFE}" --module-address "${NEW_MODULE}" --wait 0
+  run "${MIGRATE}" migrate --safe-address "${NEW_SAFE}" --module-address "${NEW_MODULE}" --blokli-url "${BLOKLI}" --wait 0
   [ "${status}" -ne 0 ]
   [[ "${output}" == *"no contract code"* ]]
   refute_logged 'systemctl stop'
@@ -533,9 +559,9 @@ mock_two_phase_curl() {
   local old_mixed="0xD1220A0CF47C7B9BE7A2E6BA89F429762E7B9ADB"
   local old_checksummed="0xD1220A0cf47c7B9Be7A2E6BA89F429762e7b9aDb"
   printf 'HOPRD_SAFE_ADDRESS=%s\nHOPRD_MODULE_ADDRESS=%s\nHOPRD_BLOKLI_URL=%s\n' \
-    "${old_lower}" "${OLD_MODULE}" "${BLOKLI}" > "${GVPN_HOPRD_V4_ENV_DIR}/10-provisioned.env"
+    "${old_lower}" "${OLD_MODULE}" "${V4_BLOKLI}" > "${GVPN_HOPRD_V4_ENV_DIR}/10-provisioned.env"
   unset GVPN_SAFE_OWNER_KEYSTORE GVPN_SAFE_OWNER_PASSWORD_FILE GVPN_PROVIDER_URL
-  run "${MIGRATE}" migrate --safe-address "${old_mixed}" --module-address "${NEW_MODULE}" --wait 0
+  run "${MIGRATE}" migrate --safe-address "${old_mixed}" --module-address "${NEW_MODULE}" --blokli-url "${BLOKLI}" --wait 0
   [ "${status}" -eq 0 ]
   [[ "${output}" == *"${old_checksummed} is the old Safe"* ]]
   refute_logged '^cast send '
@@ -558,7 +584,7 @@ mock_two_phase_curl() {
       *"/tickets/statistics"*) cat "${SANDBOX}/stats.json" ;;
       *) echo "unexpected curl: $*" >&2; exit 1 ;;
     esac'
-  run "${MIGRATE}" migrate --safe-address "${NEW_SAFE}" --module-address "${NEW_MODULE}" --wait 0
+  run "${MIGRATE}" migrate --safe-address "${NEW_SAFE}" --module-address "${NEW_MODULE}" --blokli-url "${BLOKLI}" --wait 0
   [ "${status}" -ne 0 ]
   [[ "${output}" == *"chain connector is Initializing"* ]]
   [[ "${output}" == *"close-v4-channels"* ]]
@@ -576,7 +602,7 @@ mock_two_phase_curl() {
 }
 
 @test "the RPC URL reaches cast through its environment, never a command line" {
-  run "${MIGRATE}" migrate --safe-address "${NEW_SAFE}" --module-address "${NEW_MODULE}" --native --wait 0
+  run "${MIGRATE}" migrate --safe-address "${NEW_SAFE}" --module-address "${NEW_MODULE}" --blokli-url "${BLOKLI}" --native --wait 0
   [ "${status}" -eq 0 ]
   refute_logged 'rpc.example.org'
   refute_logged -- '--rpc-url'
@@ -627,7 +653,7 @@ mock_two_phase_curl() {
 }
 
 @test "the decrypted password and API token are in no command line" {
-  run "${MIGRATE}" migrate --safe-address "${NEW_SAFE}" --module-address "${NEW_MODULE}" --wait 0
+  run "${MIGRATE}" migrate --safe-address "${NEW_SAFE}" --module-address "${NEW_MODULE}" --blokli-url "${BLOKLI}" --wait 0
   [ "${status}" -eq 0 ]
   refute_logged 'decrypted-password'
   refute_logged 'decrypted-token'
@@ -675,7 +701,7 @@ mock_two_phase_curl() {
       *"/tickets/statistics"*) cat "${SANDBOX}/stats.json" ;;
       *) echo "unexpected curl: $*" >&2; exit 1 ;;
     esac'
-  run "${MIGRATE}" migrate --safe-address "${NEW_SAFE}" --module-address "${NEW_MODULE}" --wait 300
+  run "${MIGRATE}" migrate --safe-address "${NEW_SAFE}" --module-address "${NEW_MODULE}" --blokli-url "${BLOKLI}" --wait 300
   [ "${status}" -eq 0 ]
   refute_logged 'X DELETE'
   refute_logged -x 'sleep 300'
@@ -692,7 +718,7 @@ mock_two_phase_curl() {
       *"/tickets/statistics"*) cat "${SANDBOX}/stats.json" ;;
       *) echo "unexpected curl: $*" >&2; exit 1 ;;
     esac'
-  run "${MIGRATE}" migrate --safe-address "${NEW_SAFE}" --module-address "${NEW_MODULE}" --wait 300
+  run "${MIGRATE}" migrate --safe-address "${NEW_SAFE}" --module-address "${NEW_MODULE}" --blokli-url "${BLOKLI}" --wait 300
   [ "${status}" -ne 0 ]
   [[ "${output}" == *"cannot read the v4 node's channel listing"* ]]
   # One failed read is retried before the run gives up.
@@ -705,7 +731,7 @@ mock_two_phase_curl() {
 @test "--skip-v4-cleanup moves the funds and configures v5 without the v4 node" {
   # Not even the v4 database or the cleanup binary is needed.
   rm -rf "${GVPN_HOPRD_V4_DATA}" "${MOCK_BIN}/hoprd-v4"
-  run "${MIGRATE}" migrate --safe-address "${NEW_SAFE}" --module-address "${NEW_MODULE}" --skip-v4-cleanup
+  run "${MIGRATE}" migrate --safe-address "${NEW_SAFE}" --module-address "${NEW_MODULE}" --blokli-url "${BLOKLI}" --skip-v4-cleanup
   [ "${status}" -eq 0 ]
   [[ "${output}" == *"skipping the v4 channel cleanup"* ]]
   [[ "${output}" == *"moved 7000000000000000000 wei wxHOPR"* ]]
@@ -737,7 +763,7 @@ mock_two_phase_curl() {
 @test "a v4 node that exits at once fails the run and the error names the way on" {
   mock_cmd hoprd-v4 'echo "blokli unreachable"; exit 1'
   mock_cmd curl 'exit 22'
-  run "${MIGRATE}" migrate --safe-address "${NEW_SAFE}" --module-address "${NEW_MODULE}" --wait 0
+  run "${MIGRATE}" migrate --safe-address "${NEW_SAFE}" --module-address "${NEW_MODULE}" --blokli-url "${BLOKLI}" --wait 0
   [ "${status}" -ne 0 ]
   [[ "${output}" == *"--skip-v4-cleanup"* ]]
   [[ "${output}" == *"--v4-blokli-url"* ]]
@@ -745,7 +771,7 @@ mock_two_phase_curl() {
 }
 
 @test "--v4-blokli-url reaches only the v4 node" {
-  run "${MIGRATE}" migrate --safe-address "${NEW_SAFE}" --module-address "${NEW_MODULE}" --wait 0 \
+  run "${MIGRATE}" migrate --safe-address "${NEW_SAFE}" --module-address "${NEW_MODULE}" --blokli-url "${BLOKLI}" --wait 0 \
     --v4-blokli-url https://old-blokli.example.org
   [ "${status}" -eq 0 ]
   grep -q '^hoprd-v4 .*--blokliUrl https://old-blokli.example.org$' "${MOCK_LOG}"
@@ -755,7 +781,7 @@ mock_two_phase_curl() {
 
 @test "a module that is not enabled on the new Safe is refused before hoprd is stopped" {
   export MODULE_ENABLED=false
-  run "${MIGRATE}" migrate --safe-address "${NEW_SAFE}" --module-address "${NEW_MODULE}" --wait 0
+  run "${MIGRATE}" migrate --safe-address "${NEW_SAFE}" --module-address "${NEW_MODULE}" --blokli-url "${BLOKLI}" --wait 0
   [ "${status}" -ne 0 ]
   [[ "${output}" == *"is not enabled on the Safe"* ]]
   grep -q "^cast call ${NEW_SAFE} isModuleEnabled(address)(bool) ${NEW_MODULE}$" "${MOCK_LOG}"
@@ -766,7 +792,7 @@ mock_two_phase_curl() {
 
 @test "a module that does not include this node is refused before hoprd is stopped" {
   export IS_NODE=false
-  run "${MIGRATE}" migrate --safe-address "${NEW_SAFE}" --module-address "${NEW_MODULE}" --wait 0
+  run "${MIGRATE}" migrate --safe-address "${NEW_SAFE}" --module-address "${NEW_MODULE}" --blokli-url "${BLOKLI}" --wait 0
   [ "${status}" -ne 0 ]
   [[ "${output}" == *"does not include this node"* ]]
   grep -q "^cast call ${NEW_MODULE} isNode(address)(bool) ${NODE}$" "${MOCK_LOG}"
@@ -779,7 +805,7 @@ mock_two_phase_curl() {
   export IS_NODE=false
   echo 'https://rpc.example.org' > "${SANDBOX}/rpc.url"
   unset GVPN_PROVIDER_URL
-  run "${MIGRATE}" configure-v5 --safe-address "${NEW_SAFE}" --module-address "${NEW_MODULE}" \
+  run "${MIGRATE}" configure-v5 --safe-address "${NEW_SAFE}" --module-address "${NEW_MODULE}" --blokli-url "${BLOKLI}" \
     --provider-url-file "${SANDBOX}/rpc.url"
   [ "${status}" -ne 0 ]
   [[ "${output}" == *"does not include this node"* ]]
@@ -790,7 +816,7 @@ mock_two_phase_curl() {
 @test "configure-v5 without an RPC URL writes the configuration and says the pair is unchecked" {
   unset GVPN_PROVIDER_URL
   export IS_NODE=false
-  run "${MIGRATE}" configure-v5 --safe-address "${NEW_SAFE}" --module-address "${NEW_MODULE}"
+  run "${MIGRATE}" configure-v5 --safe-address "${NEW_SAFE}" --module-address "${NEW_MODULE}" --blokli-url "${BLOKLI}"
   [ "${status}" -eq 0 ]
   [[ "${output}" == *"not checked"* ]]
   refute_logged '^cast call '
@@ -803,7 +829,7 @@ mock_two_phase_curl() {
       *is-active*) exit 3 ;;
     esac
     exit 0'
-  run "${MIGRATE}" migrate --safe-address "${NEW_SAFE}" --module-address "${NEW_MODULE}" --wait 0
+  run "${MIGRATE}" migrate --safe-address "${NEW_SAFE}" --module-address "${NEW_MODULE}" --blokli-url "${BLOKLI}" --wait 0
   [ "${status}" -ne 0 ]
   [[ "${output}" == *"did not stay up"* ]]
   [[ "${output}" == *"configure-v5"* ]]
@@ -822,7 +848,7 @@ mock_two_phase_curl() {
         echo $(( count + 1 )) > "${SANDBOX}/restarts" ;;
     esac
     exit 0'
-  run "${MIGRATE}" configure-v5 --safe-address "${NEW_SAFE}" --module-address "${NEW_MODULE}"
+  run "${MIGRATE}" configure-v5 --safe-address "${NEW_SAFE}" --module-address "${NEW_MODULE}" --blokli-url "${BLOKLI}"
   [ "${status}" -ne 0 ]
   [[ "${output}" == *"did not stay up"* ]]
 }
@@ -837,7 +863,7 @@ mock_two_phase_curl() {
       fi
     fi
     exit 0'
-  run "${MIGRATE}" migrate --safe-address "${NEW_SAFE}" --module-address "${NEW_MODULE}" --wait 0
+  run "${MIGRATE}" migrate --safe-address "${NEW_SAFE}" --module-address "${NEW_MODULE}" --blokli-url "${BLOKLI}" --wait 0
   [ "${status}" -eq 0 ]
   [ "$(cat "${SANDBOX}/lock-state")" = "held" ]
   # Released with the run, so the next update or migration is not blocked.
@@ -854,7 +880,7 @@ unmock_sleep() {
   export GVPN_MIGRATE_LOCK_WAIT_S=1
   unmock_sleep
   hold_lock "${GVPN_RUN_DIR}/update.lock"
-  run "${MIGRATE}" migrate --safe-address "${NEW_SAFE}" --module-address "${NEW_MODULE}" --wait 0
+  run "${MIGRATE}" migrate --safe-address "${NEW_SAFE}" --module-address "${NEW_MODULE}" --blokli-url "${BLOKLI}" --wait 0
   release_lock
   [ "${status}" -ne 0 ]
   [[ "${output}" == *"${GVPN_RUN_DIR}/update.lock"* ]]
@@ -929,7 +955,7 @@ unmock_sleep() {
 }
 
 @test "a failed run on a migrated device restarts hoprd and says so" {
-  "${MIGRATE}" configure-v5 --safe-address "${NEW_SAFE}" --module-address "${NEW_MODULE}"
+  "${MIGRATE}" configure-v5 --safe-address "${NEW_SAFE}" --module-address "${NEW_MODULE}" --blokli-url "${BLOKLI}"
   mock_two_phase_curl
   export FINALIZE_NEVER=1
   run "${MIGRATE}" close-v4-channels --wait 0

@@ -49,27 +49,31 @@
 #       `sudo GVPN_...=value gvpn-exit-hoprd-migrate ...`.
 #
 #   gvpn-exit-hoprd-migrate configure-v5 --safe-address 0xSAFE
-#       --module-address 0xMODULE [--blokli-url https://..]
+#       --module-address 0xMODULE --blokli-url https://..
 #       [--provider-url-file FILE]
-#       Write the v5 provisioning file and restart hoprd. The Blokli URL
-#       defaults to the one the device already runs with, else the one the v4
-#       provisioning file carries. With an RPC URL the Safe and module are
-#       checked first: the module must be enabled on the Safe and include this
-#       node. hoprd must then stay up for a minute, or the command fails.
+#       Write the v5 provisioning file and restart hoprd. --blokli-url names
+#       the v5 network's Blokli (https://blokli.piz-palu.gnosisvpn.io in
+#       production) and is required until the v5 provisioning file carries
+#       one; later runs default to that one. The v4 provisioning file's URL is
+#       never taken: the v4 network's Blokli does not index the new Safe. With
+#       an RPC URL the Safe and module are checked first: the module must be
+#       enabled on the Safe and include this node. hoprd must then stay up for
+#       a minute, or the command fails.
 #
 #   gvpn-exit-hoprd-migrate migrate --safe-address 0xSAFE
 #       --module-address 0xMODULE --provider-url-file FILE
 #       --safe-owner-keystore FILE --safe-owner-password-file FILE
-#       [--blokli-url https://..] [--wait SECONDS] [--forfeit-tickets]
+#       --blokli-url https://.. [--wait SECONDS] [--forfeit-tickets]
 #       [--native] [--skip-v4-cleanup] [--v4-start-timeout SECONDS]
 #       [--v4-blokli-url https://..]
 #       Do all three in one run: stop hoprd, close the v4 channels, move the
 #       old Safe's funds to the new Safe, write the v5 configuration and start
 #       hoprd again. Every step is safe to repeat; a run that failed halfway is
 #       resumed by running the same command again. 0xSAFE is checked like
-#       --to above, and the pair like configure-v5 above, before hoprd is
-#       stopped. When 0xSAFE is the old Safe, the funds stay where they are and
-#       neither the RPC URL nor the owner keystore is needed.
+#       --to above, and the pair and --blokli-url like configure-v5 above,
+#       before hoprd is stopped. When 0xSAFE is the old Safe, the funds stay
+#       where they are and neither the RPC URL nor the owner keystore is
+#       needed.
 #       --skip-v4-cleanup leaves the v4 node out: for a device whose v4 node
 #       does not start any more. Stake in an open v4 channel and unredeemed
 #       tickets then stay behind until close-v4-channels and
@@ -771,22 +775,25 @@ update_provisioning_record() {
   die "cannot update ${PROVISIONING_JSON}; it is left as it was"
 }
 
+# v5_blokli_url GIVEN: print the Blokli URL the v5 node is to use: GIVEN, else
+# the one the v5 provisioning file carries, so that a rerun keeps the URL the
+# operator gave the first time. The v4 provisioning file is no fallback: it
+# names the v4 network's Blokli, which does not index the new Safe.
+v5_blokli_url() {
+  local blokli="$1"
+  if [[ -z "${blokli}" && -f "${V5_ENV_FILE}" ]]; then
+    blokli="$(sed -n 's/^HOPRD_BLOKLI_URL=//p' "${V5_ENV_FILE}" | tail -1)"
+  fi
+  [[ -n "${blokli}" ]] \
+    || die "--blokli-url is required until the v5 provisioning file names one: the v4 network's Blokli does not index the new Safe. The production endpoint is https://blokli.piz-palu.gnosisvpn.io"
+  https_url_ok "${blokli}" || die "--blokli-url must be an https:// URL with a host name or IPv4 address"
+  echo "${blokli}"
+}
+
 configure_v5() {
   local safe="$1" module="$2" blokli="$3" now
   [[ "${safe}" =~ ${ADDRESS_RE} ]] || die "--safe-address must be a 0x-prefixed 20-byte address"
   [[ "${module}" =~ ${ADDRESS_RE} ]] || die "--module-address must be a 0x-prefixed 20-byte address"
-  if [[ -z "${blokli}" ]]; then
-    # Prefer the URL the device already runs with; a rerun of migrate must not
-    # revert a URL the operator supplied the first time.
-    if [[ -f "${V5_ENV_FILE}" ]]; then
-      blokli="$(sed -n 's/^HOPRD_BLOKLI_URL=//p' "${V5_ENV_FILE}" | tail -1)"
-    fi
-    if [[ -z "${blokli}" ]]; then
-      [[ -f "${V4_ENV_FILE}" ]] || die "--blokli-url is required when the v4 provisioning file is missing"
-      blokli="$(old_value HOPRD_BLOKLI_URL)"
-    fi
-  fi
-  https_url_ok "${blokli}" || die "--blokli-url must be an https:// URL with a host name or IPv4 address"
   printf 'HOPRD_SAFE_ADDRESS=%s\nHOPRD_MODULE_ADDRESS=%s\nHOPRD_BLOKLI_URL=%s\n' \
     "${safe}" "${module}" "${blokli}" | write_private "${V5_ENV_FILE}"
   update_provisioning_record "${safe}" "${module}" "${blokli}"
@@ -858,10 +865,10 @@ cmd_migrate() {
   [[ "${wait_s}" =~ ^[0-9]+$ ]] || die "--wait must be a number of seconds"
   [[ "${safe}" =~ ${ADDRESS_RE} ]] || die "--safe-address must be a 0x-prefixed 20-byte address"
   [[ "${module}" =~ ${ADDRESS_RE} ]] || die "--module-address must be a 0x-prefixed 20-byte address"
-  [[ -z "${blokli}" ]] || https_url_ok "${blokli}" || die "--blokli-url must be an https:// URL with a host name or IPv4 address"
   require_v4_node_options
   require_root
   lock_updates
+  blokli="$(v5_blokli_url "${blokli}")"
   # Without the v4 node only the old Safe's address is needed, not the v4
   # database, identity or binary.
   (( skip_cleanup )) || require_old_device
@@ -954,6 +961,7 @@ cmd_configure() {
   [[ "${module}" =~ ${ADDRESS_RE} ]] || die "--module-address must be a 0x-prefixed 20-byte address"
   require_root
   lock_updates
+  blokli="$(v5_blokli_url "${blokli}")"
   check_node_pair "${safe}" "${module}"
   configure_v5 "${safe}" "${module}" "${blokli}"
   # The running daemon still holds the old Safe; restart it so the new
