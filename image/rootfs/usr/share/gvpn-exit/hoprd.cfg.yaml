@@ -83,7 +83,7 @@ strategy:
         minimum_redeem_ticket_value: "1 wei wxHOPR"
     - Pix:
         strategy:
-          price_per_byte: "1 000 000 000 wei wxHOPR"
+          price_per_byte: "9 000 000 000 wei wxHOPR"
           max_ssa_allocation: 3 wxHOPR
           max_spend_per_window: 6 wxHOPR
           spend_window: 1day
