@@ -489,8 +489,9 @@ and SELinux, no mocks.
 
 `unprovisioned`, `provisioned` and `update` also run common checks: `lan0`
 naming and RPS, socket buffers, firewall isolation, IPv6, loopback-only
-monitoring, blocklist, greenboot, masked stock updates and SELinux (ignoring
-bootc's known `chcon` probe denial).
+monitoring, blocklist, greenboot, masked stock updates and SELinux (no denial in
+the journal's audit records, the device's audit log, ignoring bootc's known
+`chcon` probe).
 
 None of this proves funded announcement, NAT/CGNAT reachability, client
 sessions, packet-level isolation, throughput or DB restore after a forced

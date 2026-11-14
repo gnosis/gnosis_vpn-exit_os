@@ -96,3 +96,73 @@ esac'
   MOCK_TUNNEL_ID=device-under-test run bash "${RUN}" enroll
   [[ "${output}" == *"PASS gvpn reachable through the bastion"* ]]
 }
+
+# The device's journal, as the AVC check reads it: the device runs no auditd,
+# so the journal's audit transport is its audit log, while the kernel log
+# carries only a rate-limited copy of some audit records. Root scripts that
+# read the journal run here against this model; every other command fails.
+device_journal() {
+  JOURNAL_DIR="${SANDBOX}/journal"
+  mkdir -p "${JOURNAL_DIR}"
+  : >"${JOURNAL_DIR}/kernel"
+  : >"${JOURNAL_DIR}/audit"
+  export JOURNAL_DIR
+  mock_cmd ssh '
+while (( $# )); do
+  arg="$1"
+  shift
+  [[ "${arg}" == gvpn@* ]] && break
+done
+case "$*" in
+  true) exit 0 ;;
+  "sudo bash -c "*journalctl*) eval "${*#sudo }" ;;
+  *) exit 1 ;;
+esac'
+  mock_cmd journalctl '
+transports=() pattern="" lines=""
+while (( $# )); do
+  case "$1" in
+    -k|--dmesg) transports+=(kernel) ;;
+    _TRANSPORT=*) transports+=("${1#_TRANSPORT=}") ;;
+    -g|--grep) pattern="$2"; shift ;;
+    -n|--lines) lines="$2"; shift ;;
+  esac
+  shift
+done
+(( ${#transports[@]} )) || transports=(kernel audit)
+entries="$(cd "${JOURNAL_DIR}" && cat "${transports[@]}")"
+if [[ -n "${pattern}" ]]; then
+  entries="$(grep -E -- "${pattern}" <<<"${entries}")" || exit 1
+fi
+[[ -z "${lines}" ]] || entries="$(tail -n "${lines}" <<<"${entries}")"
+[[ -z "${entries}" ]] || printf "%s\n" "${entries}"'
+}
+
+SERVICE_START='Nov 14 20:58:30 gvpn-exit audit[1]: SERVICE_START pid=1 uid=0 auid=4294967295 ses=4294967295 subj=system_u:system_r:init_t:s0 msg='"'"'unit=chronyd comm="systemd" exe="/usr/lib/systemd/systemd" hostname=? addr=? terminal=? res=success'"'"''
+# bootc probes for mac_admin with a label the policy does not know whenever a
+# service runs it (recorded on the device).
+BOOTC_PROBE='Nov 14 20:58:30 gvpn-exit audit[843]: AVC avc:  denied  { mac_admin } for  pid=843 comm="chcon" capability=33  scontext=system_u:system_r:unconfined_service_t:s0 tcontext=system_u:system_r:unconfined_service_t:s0 tclass=capability2 permissive=0'
+SSHD_DENIAL='Nov 14 20:58:31 gvpn-exit audit[1114]: AVC avc:  denied  { read } for  pid=1114 comm="sshd" name="10-listen.conf" dev="tmpfs" ino=42 scontext=system_u:system_r:sshd_t:s0-s0:c0.c1023 tcontext=system_u:object_r:var_run_t:s0 tclass=file permissive=0'
+
+@test "the AVC check reads denials from the audit log, not only the kernel log" {
+  device_journal
+  printf '%s\n' "${SERVICE_START}" "${BOOTC_PROBE}" "${SSHD_DENIAL}" >"${JOURNAL_DIR}/audit"
+  run bash "${RUN}" unprovisioned
+  [[ "${output}" == *"FAIL no AVC denials this boot"* ]]
+  [[ "${output}" == *'comm="sshd"'* ]]
+}
+
+@test "the AVC check accepts bootc's mac_admin probe as the audit log records it" {
+  device_journal
+  printf '%s\n' "${SERVICE_START}" "${BOOTC_PROBE}" "${BOOTC_PROBE/843/954}" >"${JOURNAL_DIR}/audit"
+  run bash "${RUN}" unprovisioned
+  [[ "${output}" == *"PASS no AVC denials this boot"* ]]
+}
+
+# A journal that receives no audit records would pass the check unread.
+@test "the AVC check fails when the journal holds no audit records" {
+  device_journal
+  run bash "${RUN}" unprovisioned
+  [[ "${output}" == *"FAIL no AVC denials this boot"* ]]
+  [[ "${output}" == *"no audit records"* ]]
+}

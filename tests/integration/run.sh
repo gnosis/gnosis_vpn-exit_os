@@ -254,13 +254,22 @@ wg_key_not_at_rest() {
 
 # No SELinux denials this boot, except bootc's own capability probe: when
 # bootc runs from a service (greenboot, data-guard, updates) it tests whether
-# it may relabel to install_t with `chcon`, which unconfined_service_t may not
-# (mac_admin). That probe is expected and reported separately.
+# it may write SELinux labels the policy does not know, as install_t may:
+# every command that opens its storage, `bootc status` included, runs
+# `chcon -t invalid_bootcinstall_testlabel_t` on a temporary file, and again
+# after it re-executes itself. unconfined_service_t lacks mac_admin, so each
+# probe is denied and bootc continues without install_t. That probe is
+# expected and reported separately.
 BOOTC_PROBE_DENIAL='comm="chcon" capability=33 .*scontext=system_u:system_r:unconfined_service_t'
 
+# The device runs no auditd: its audit log is the journal's audit transport.
+# The kernel log carries only a rate-limited copy of some audit records.
 no_avc_denials() {
   local denials unexpected
-  denials="$(vm_root_bash "journalctl -b -k --no-pager -q -g 'avc: +denied' || true")"
+  # A journal that receives no audit records would pass the check unread.
+  [[ -n "$(vm_root_bash 'journalctl -b _TRANSPORT=audit --no-pager -q -n 1')" ]] \
+    || { echo "     no audit records in the journal this boot"; return 1; }
+  denials="$(vm_root_bash "journalctl -b _TRANSPORT=audit --no-pager -q -g 'avc: +denied' || true")"
   unexpected="$(grep -vE "${BOOTC_PROBE_DENIAL}" <<< "${denials}" || true)"
   if [[ -n "${denials}" && "${denials}" != "${unexpected}" ]]; then
     echo "     (bootc install_t probe denied, expected)"
