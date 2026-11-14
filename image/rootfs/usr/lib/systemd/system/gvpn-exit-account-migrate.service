@@ -1,0 +1,14 @@
+[Unit]
+Description=Rename the devops account of an earlier install to gvpn
+Documentation=file:///usr/libexec/gvpn-exit/account-migrate.sh
+# sshd and the console admit gvpn only, so the rename comes before anyone can
+# log in. Not gated on provisioning: every device needs its account.
+Before=sshd.service systemd-user-sessions.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/libexec/gvpn-exit/account-migrate.sh
+
+[Install]
+WantedBy=multi-user.target

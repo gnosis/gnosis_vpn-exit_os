@@ -5,6 +5,13 @@ bootc image mode with `hoprd`, `gnosis_vpn-server` and the device logic in this
 repository. Versions are pinned in `image/versions.env`. Build and test tooling
 is in [build.md](build.md), open work in [roadmap.md](roadmap.md).
 
+The image's os-release names the OS GnosisVPN ExitOS (`NAME`, `PRETTY_NAME`),
+which the boot menu, the installer's menu and the console show. `ID`,
+`VERSION_ID` and the other fields stay Fedora's, because dnf,
+bootc-image-builder and the installer's volume label key on them.
+bootc-image-builder adds `VERSION_ID` to the installer's menu titles, and the
+ISO build removes it again ([disk images](build.md#disk-images)).
+
 ## Supported environment
 
 - Wired DHCP LAN with IPv4, outbound HTTPS (registry, Blokli, blocklist feed,
@@ -53,8 +60,8 @@ GnosisVPN client -> HOPR session -> hoprd
                                                           |
                                                 MASQUERADE -> lan0
 
-Operator -> bastion loopback port -> reverse SSH tunnel -> device sshd -> devops (sudo)
-Operator on the LAN (RFC1918 source) -------------------> device sshd -> devops (sudo)
+Operator -> bastion loopback port -> reverse SSH tunnel -> device sshd -> gvpn (sudo)
+Operator on the LAN (RFC1918 source) -------------------> device sshd -> gvpn (sudo)
 ```
 
 - `172.30.0.1` is the session target address built into the GnosisVPN client.
@@ -105,7 +112,7 @@ environment for tests.
 | `/usr/share/gvpn-exit/wggvpn.conf.in`               | WireGuard template, rendered to `/run/gnosisvpn-server/`                                                                                                                                           |
 | `/etc/gvpn-exit/support.env`, `bastion_known_hosts` | Bastion, reverse port and pinned bastion host key; absent on an unmanaged device                                                                                                                   |
 | `/etc/gvpn-exit/enroll.key`                         | Installer enrollment key (root 0600), bastion devices only; `finalize` removes it                                                                                                                  |
-| `/var/home/devops/.ssh/authorized_keys`             | Keys that log in as `devops`: the installer's, and what the operator adds ([local access](local-access.md))                                                                                        |
+| `/var/home/gvpn/.ssh/authorized_keys`               | Keys that log in as `gvpn`: the installer's, and what the operator adds ([local access](local-access.md))                                                                                          |
 | `/etc/gvpn-exit/fleet.env`                          | Optional `GVPN_FLEET_URL`, the heartbeat target (fleet backend: not implemented, part of the [roadmap](roadmap.md#fleet-and-onboarding))                                                           |
 | `/etc/chrony.conf`                                  | NTS sources (Cloudflare, Netnod, PTB) instead of the Fedora pool; DHCP-supplied servers are used through `sourcedir`                                                                               |
 | `/etc/greenboot/greenboot.conf`                     | Boot attempts, watchdog grace, disabled stock checks                                                                                                                                               |
@@ -141,13 +148,15 @@ from `bootc status --format=json`).
 
 ## Provisioning
 
-`sudo gvpn-exit-provision` runs as `devops` over LAN SSH or the enrollment
-tunnel ([runbook](first-install.md#5-provision)).
+`sudo gvpn-exit-provision` runs as `gvpn` over LAN SSH or the enrollment tunnel
+([runbook](first-install.md#5-provision)).
 
 1. `identity` requires a TPM2 and refuses to replace an existing identity. It
    creates the hoprd identity, password, API token, WireGuard key and support
    SSH key in a private `/run` directory, seals them and prints the node
-   address, peer id and support public key.
+   address, peer id and support public key. The operator tools print every
+   on-chain address in its EIP-55 checksum form (`cast to-check-sum-address`)
+   and store addresses as they were given.
 2. The operator creates and funds the Safe and module elsewhere and, on a device
    with a bastion, admits the support key there.
 3. `finalize --safe-address --module-address --blokli-url --location [...]`
@@ -220,6 +229,14 @@ ISO.
   queue.
 - NetworkManager runs DHCP on `lan0` and leaves `wggvpn`, `ifb-gvpn` and Wi-Fi
   devices unmanaged. Intel Wi-Fi and USB Bluetooth drivers are blacklisted.
+- The device is named `gvpn-exit`. The installer writes the name to
+  `/etc/hostname`, and NetworkManager sends that static name with its DHCP
+  requests, so the router's lease table lists the device under it. Where
+  `/etc/hostname` names no host, as on a device installed from an earlier ISO,
+  the kernel argument `systemd.set_credential=system.hostname:gvpn-exit` from
+  `/usr/lib/bootc/kargs.d`, which bootc adds on install and on update, gives the
+  device the same name, but NetworkManager does not send it. `/etc/hostname`
+  wins over it: `sudo hostnamectl hostname NAME` renames the device.
 - IPv4 forwarding is on. Host IPv6 is disabled, and ip6tables drops all IPv6
   except loopback.
 - `net.core.{r,w}mem_{default,max}` are 4 MiB. hoprd's QUIC sockets inherit the
@@ -287,17 +304,27 @@ set, and a server that ignores the resulting ICMP frag-needed stalls the
 connection after the handshake opens. TCPMSS never raises an announced value, so
 clients that already announce the tunnel MSS are unaffected.
 
-sshd accepts only `devops` and only with a key. A NetworkManager dispatcher
-script binds it to the current `lan0` address and loopback when `lan0` comes up
-and on every DHCP lease change; it labels that runtime drop-in like sshd's own
+sshd accepts only `gvpn` and only with a key. A NetworkManager dispatcher script
+binds it to the current `lan0` address and loopback when `lan0` comes up and on
+every DHCP lease change; it labels that runtime drop-in like sshd's own
 configuration, because SELinux otherwise keeps sshd from reading it. Until then
 sshd listens on all addresses, still restricted by the firewall. The installer
-locks root's password and, for a key-configured ISO, devops' password too. A
-console-configured ISO gives devops a temporary password and expires it, and
+locks root's password and, for a key-configured ISO, `gvpn`'s password too. A
+console-configured ISO gives `gvpn` a temporary password and expires it, and
 enables `serial-getty@ttyS0` only when the installed system runs in a VM; on
 hardware the console is tty1. sshd still refuses passwords, but the console
-accepts the devops password until the operator locks it
-(`sudo passwd -l devops`). devops has passwordless sudo.
+accepts the `gvpn` password until the operator locks it (`sudo passwd -l gvpn`).
+`gvpn` has passwordless sudo.
+
+A device installed from an earlier ISO has this account as `devops`.
+`gvpn-exit-account-migrate.service` renames it on every boot before sshd and the
+console admit logins, and does nothing once no `devops` is left. The account
+keeps its uid, password, keys and sudo rights; its home moves to
+`/var/home/gvpn` and `/var/home/devops` stays as a link to it, because the
+previous deployment, which a rollback boots, keeps its own `/etc` with `devops`
+while `/var` is shared. On a provisioned device the required greenboot check
+waits for the unit, so a rename that fails is a red boot and greenboot rolls
+back to the deployment that still admits `devops`.
 
 ## Traffic shaping and blocklist
 
@@ -540,7 +567,7 @@ what it does and does not buy, because it is the largest standing privilege on
 the device:
 
 - **What it grants.** While the window is open, whoever holds the bastion and a
-  key admitted there reaches the device's `sshd` as `devops`, which has
+  key admitted there reaches the device's `sshd` as `gvpn`, which has
   passwordless sudo. In effect the bastion's operator set has root on every
   device with an open window. That is the design: the alternative is a device
   nobody can repair without sending someone to it.
@@ -567,7 +594,7 @@ the device:
   period, an unsynchronized clock stops the tunnel, the bastion restricts each
   key to its own reverse port ([bastion](bastion.md)), and the heartbeat reports
   the deadline so a window nobody needs shows up in the fleet's telemetry. LAN
-  SSH and the `devops` sudo rule are separate from all of this and remain the
+  SSH and the `gvpn` sudo rule are separate from all of this and remain the
   device owner's.
 
 [recovery.md](recovery.md) covers the device that has neither: `finalize`
@@ -608,7 +635,7 @@ to that window's deadline.
   skipped and root-only checks show n/a. The SSH MOTD points to it.
 - `top`, `htop`, `atop` and `ethtool` are installed for diagnostics.
 
-Operators log in as `devops` over LAN SSH or the support tunnel, with the
+Operators log in as `gvpn` over LAN SSH or the support tunnel, with the
 installer-provided key or, on a device installed from a console-configured ISO,
 the key they added on the console. The operator commands are
 `gvpn-exit-provision`, `gvpn-exit-support`, `gvpn-exit-status`,

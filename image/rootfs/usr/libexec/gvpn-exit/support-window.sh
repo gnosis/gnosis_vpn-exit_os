@@ -25,7 +25,7 @@ set -euo pipefail
 source "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/lib.sh"
 
 SUPPORT_UNTIL="${GVPN_STATE_DIR}/support-until"
-DEVOPS_KEYS="${GVPN_DEVOPS_AUTHORIZED_KEYS:-/var/home/devops/.ssh/authorized_keys}"
+OPERATOR_KEYS="${GVPN_OPERATOR_AUTHORIZED_KEYS:-/var/home/gvpn/.ssh/authorized_keys}"
 
 # Deadline as epoch seconds; fails if the file is missing or unparsable.
 deadline_epoch() {
@@ -42,11 +42,11 @@ deadline_epoch() {
 # place, never replaced, so its owner, mode and SELinux label stay.
 retime_recovery_keys() {
   local expiry="$1" tmp
-  [[ -f "${DEVOPS_KEYS}" ]] || return 0
+  [[ -f "${OPERATOR_KEYS}" ]] || return 0
   tmp="$(mktemp)"
   sed -E "s/^expiry-time=\"[0-9]+Z\"( [^ ]+ [^ ]+ gvpn-recovery-[0-9]+)$/expiry-time=\"${expiry}\"\\1/" \
-    "${DEVOPS_KEYS}" >"${tmp}"
-  cat "${tmp}" >"${DEVOPS_KEYS}"
+    "${OPERATOR_KEYS}" >"${tmp}"
+  cat "${tmp}" >"${OPERATOR_KEYS}"
   rm -f "${tmp}"
 }
 

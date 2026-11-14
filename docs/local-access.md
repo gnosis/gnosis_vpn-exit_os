@@ -7,13 +7,13 @@ hardware and in a VM.
 
 ## What the device accepts
 
-|                            |                                                                                                                                                                                          |
-| -------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| User                       | `devops` only; root cannot log in                                                                                                                                                        |
-| Authentication             | SSH public key only; no SSH passwords. A console-configured device also has a `devops` password, valid on its console only ([first access on the console](#first-access-on-the-console)) |
-| Privilege                  | `devops` has passwordless `sudo`                                                                                                                                                         |
-| Where from                 | TCP port 22 on the wired LAN port, from private (RFC1918) source addresses: `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`                                                              |
-| Anything else from the LAN | ICMP echo (ping) and DHCP replies (UDP 67 -> 68 on `lan0`), plus the default gateway's SSDP answer (UDP source port 1900) while a netprobe runs; no other service is reachable           |
+|                            |                                                                                                                                                                                        |
+| -------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| User                       | `gvpn` only; root cannot log in                                                                                                                                                        |
+| Authentication             | SSH public key only; no SSH passwords. A console-configured device also has a `gvpn` password, valid on its console only ([first access on the console](#first-access-on-the-console)) |
+| Privilege                  | `gvpn` has passwordless `sudo`                                                                                                                                                         |
+| Where from                 | TCP port 22 on the wired LAN port, from private (RFC1918) source addresses: `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`                                                            |
+| Anything else from the LAN | ICMP echo (ping) and DHCP replies (UDP 67 -> 68 on `lan0`), plus the default gateway's SSDP answer (UDP source port 1900) while a netprobe runs; no other service is reachable         |
 
 The source restriction, the port and the user are part of the image
 (`/usr/share/gvpn-exit/iptables.rules`,
@@ -29,16 +29,15 @@ device with a [support bastion](bastion.md).
 
 ## The key in the installer
 
-`GVPN_DEVOPS_SSH_KEY` names the public key file the installer puts into
-`devops`' `authorized_keys`
-([first install](first-install.md#build-it-locally)). A console-configured ISO
-has no installer key; add the key shown here on the device's console instead
-([below](#first-access-on-the-console)). Create a pair if you have none, and
-keep the private half:
+`GVPN_OPERATOR_SSH_KEY` names the public key file the installer puts into
+`gvpn`'s `authorized_keys` ([first install](first-install.md#build-it-locally)).
+A console-configured ISO has no installer key; add the key shown here on the
+device's console instead ([below](#first-access-on-the-console)). Create a pair
+if you have none, and keep the private half:
 
 ```sh
 ssh-keygen -t ed25519 -f ~/.ssh/gvpn-exit -C "you@workstation"
-export GVPN_DEVOPS_SSH_KEY="$HOME/.ssh/gvpn-exit.pub"
+export GVPN_OPERATOR_SSH_KEY="$HOME/.ssh/gvpn-exit.pub"
 ```
 
 - Only the first line of the file is used, and its comment is dropped.
@@ -58,8 +57,9 @@ A console-configured device (installed from the published ISO or one built with
 console: a keyboard and monitor (tty1) on hardware, the serial console in an
 Incus VM (`just incus-console`, [Incus VM](incus.md#on-the-console)).
 
-1. Log in as `devops` with the temporary password `gvpn-exit`. It is expired, so
-   the login asks for a new one; choose it.
+1. At the `gvpn-exit login:` prompt, log in as `gvpn` with the temporary
+   password `exit4gvpn`. It is expired, so the login asks for a new one; choose
+   it.
 2. Install your public key:
 
    ```sh
@@ -76,24 +76,24 @@ Incus VM (`just incus-console`, [Incus VM](incus.md#on-the-console)).
 
 SSH stays public-key-only, so the password works on the console only. The
 console stays a way in, though: anyone at the keyboard and monitor, or with
-access to the VM console, can log in as `devops` with the password chosen at the
-first login, or with `gvpn-exit` until then, and has root through `sudo`. Once
+access to the VM console, can log in as `gvpn` with the password chosen at the
+first login, or with `exit4gvpn` until then, and has root through `sudo`. Once
 your key works over SSH, lock the password:
 
 ```sh
-sudo passwd -l devops
+sudo passwd -l gvpn
 ```
 
-Key login keeps working. On a key-configured device the `devops` password is
+Key login keeps working. On a key-configured device the `gvpn` password is
 locked from the install, and a keyboard and monitor are no way in.
 
 ## First login
 
 Find the address the router's DHCP server gave the device (its lease table lists
-it; the device answers ping), then:
+it as `gvpn-exit`; the device answers ping), then:
 
 ```sh
-ssh -i ~/.ssh/gvpn-exit devops@DEVICE_IP
+ssh -i ~/.ssh/gvpn-exit gvpn@DEVICE_IP
 ```
 
 The first connection asks you to accept the device's host key. On a
@@ -115,7 +115,7 @@ An entry in `~/.ssh/config` on your workstation saves the options:
 ```text
 Host gvpn-exit
     HostName DEVICE_IP
-    User devops
+    User gvpn
     IdentityFile ~/.ssh/gvpn-exit
     IdentitiesOnly yes
 ```
@@ -125,9 +125,14 @@ device itself takes its address from DHCP only.
 
 ## Adding and replacing keys
 
-Keys live in `/var/home/devops/.ssh/authorized_keys` (`~/.ssh/authorized_keys`
-for `devops`), one public key per line. The file is device state: image updates
-and rollbacks leave it alone.
+Keys live in `/var/home/gvpn/.ssh/authorized_keys` (`~/.ssh/authorized_keys` for
+`gvpn`), one public key per line. The file is device state: image updates and
+rollbacks leave it alone.
+
+A device installed from an earlier ISO called this account `devops`. Its first
+boot of an image with `gvpn` renames the account and keeps its password and keys
+([architecture](architecture.md#network-and-firewall)), so log in as `gvpn` from
+then on and change `User devops` in your `~/.ssh/config`.
 
 Add a key, for a second workstation or another person:
 
@@ -142,10 +147,10 @@ Replace a key in this order, so a mistake cannot lock you out:
    terminal.
 3. Only then remove the old line with an editor (`vi ~/.ssh/authorized_keys`).
 
-Keep the file owned by `devops` with mode `0600`; `sshd`'s `StrictModes` refuses
-a key file that group or others can write, or that belongs to a user other than
-`devops` or root. Everyone listed there has root on the device through `sudo`,
-so list people you would hand the device to.
+Keep the file owned by `gvpn` with mode `0600`; `sshd`'s `StrictModes` refuses a
+key file that group or others can write, or that belongs to a user other than
+`gvpn` or root. Everyone listed there has root on the device through `sudo`, so
+list people you would hand the device to.
 
 ## Day-to-day
 
@@ -165,9 +170,9 @@ access.
 
 The [recovery stick](recovery.md) is the way back in: built from this repository
 with your public keys on it, booted once on the device, it adds those keys to
-`devops`. It needs no bastion. The keys it adds expire after seven days, so log
-in from the LAN within that time and add a permanent key as
-[above](#adding-and-replacing-keys). A console-configured device whose `devops`
+`gvpn`. It needs no bastion. The keys it adds expire after seven days, so log in
+from the LAN within that time and add a permanent key as
+[above](#adding-and-replacing-keys). A console-configured device whose `gvpn`
 password is not locked can also be reached on its console with that password.
 
 An unmanaged device ignores the support window the stick opens; the bastion and

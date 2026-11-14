@@ -49,10 +49,10 @@ again.
 
 First access is a third property of the installer, independent of the target:
 
-- **Key-configured** (`just iso`): your SSH public key (`GVPN_DEVOPS_SSH_KEY`)
-  logs in as `devops`; the `devops` password is locked.
+- **Key-configured** (`just iso`): your SSH public key (`GVPN_OPERATOR_SSH_KEY`)
+  logs in as `gvpn`; the `gvpn` password is locked.
 - **Console-configured** (`just iso-console`, and the ISO CI publishes): no SSH
-  key. `devops` gets the temporary password `gvpn-exit`, expired, so the first
+  key. `gvpn` gets the temporary password `exit4gvpn`, expired, so the first
   console login must change it; then you install your own key
   ([first access on the console](local-access.md#first-access-on-the-console)).
 
@@ -131,7 +131,7 @@ SSH public key, and the managed setup the bastion inputs from step 1. Build
 right before installing: every `just iso` and `just iso-console`, including the
 QEMU rehearsal's, overwrites the same `output/iso/bootiso/install.iso`.
 
-`GVPN_DEVOPS_SSH_KEY` is the public key that logs in as `devops` on a
+`GVPN_OPERATOR_SSH_KEY` is the public key that logs in as `gvpn` on a
 key-configured device. It is the only way into the device over the LAN, so use a
 key whose private half you keep
 ([local access](local-access.md#the-key-in-the-installer)).
@@ -140,7 +140,7 @@ key whose private half you keep
 nix develop -c just test
 export GVPN_IMAGE_REPO='registry.example.org/fleet/gvpn-exit-os'
 export GVPN_COSIGN_PUB='/secure/path/cosign.pub'   # public half of your update key
-export GVPN_DEVOPS_SSH_KEY="$HOME/.ssh/id_ed25519.pub"
+export GVPN_OPERATOR_SSH_KEY="$HOME/.ssh/id_ed25519.pub"
 ```
 
 Managed only; leave all four unset for an unmanaged device:
@@ -268,15 +268,16 @@ installs it ([creating the VM](incus.md#create-the-vm)).
 ## 4. Install and connect
 
 _Hardware only._ Connect the 2.5GbE port to a DHCP LAN and boot from the stick.
-The installer runs without prompts and reboots; then remove the stick.
+The installer runs without prompts and powers the device off when it is done.
+Remove the stick, then power the device on again.
 
-_VM only._ The installer runs on the VM console and reboots; leave the console
-with `Ctrl-a q` and boot the installed disk with `just incus-run`.
+_VM only._ The installer runs on the VM console and powers the VM off when it is
+done, which ends the console; boot the installed disk with `just incus-run`.
 
 If the installer stops because it found no internal disk or more than one, build
 the ISO again with `GVPN_INSTALL_DISK` naming the disk (step 3).
 
-Console-configured ISO only: log in as `devops` with `gvpn-exit` on the console
+Console-configured ISO only: log in as `gvpn` with `exit4gvpn` on the console
 (keyboard and monitor on hardware, `just incus-console` in a VM), choose a new
 password and install your public key
 ([first access on the console](local-access.md#first-access-on-the-console)).
@@ -286,29 +287,28 @@ Managed only: once the enrollment tunnel is up, connect through the bastion
 ([reaching a device](bastion.md#reaching-a-device)):
 
 ```sh
-ssh -J gvpn-bastion@bastion.example.org:2222 -p 22001 devops@127.0.0.1
+ssh -J gvpn-bastion@bastion.example.org:2222 -p 22001 gvpn@127.0.0.1
 ```
 
-Every setup: on the LAN, find the device's DHCP address in the router; SSH is
-accepted from RFC1918 sources only:
+Every setup: on the LAN, find the device's DHCP address in the router, which
+lists it as `gvpn-exit`; SSH is accepted from RFC1918 sources only:
 
 ```sh
-ssh -i ~/.ssh/id_ed25519 devops@DEVICE_IP
+ssh -i ~/.ssh/id_ed25519 gvpn@DEVICE_IP
 ```
 
 In a VM, use `just incus-ssh` (it resolves the bridge address) or
-`ssh -i ~/.ssh/id_ed25519 devops@VM_BRIDGE_IP`; there is no router lease to
-find.
+`ssh -i ~/.ssh/id_ed25519 gvpn@VM_BRIDGE_IP`; there is no router lease to find.
 
-There are no SSH passwords: only `devops` with an installed key can log in over
-SSH, and `devops` has passwordless sudo. On a key-configured device a keyboard
-and monitor are not a way in. On a console-configured device they are, and so is
-the VM console: anyone at it can log in as `devops` with the password chosen at
-the first login, or with `gvpn-exit` until then, and has root through `sudo`.
-Once your key works, close that with `sudo passwd -l devops`; key login keeps
-working. Verify the device's host key through a trusted channel before accepting
-it; [local access](local-access.md) covers that, a client configuration and how
-to add or replace keys on the device.
+There are no SSH passwords: only `gvpn` with an installed key can log in over
+SSH, and `gvpn` has passwordless sudo. On a key-configured device a keyboard and
+monitor are not a way in. On a console-configured device they are, and so is the
+VM console: anyone at it can log in as `gvpn` with the password chosen at the
+first login, or with `exit4gvpn` until then, and has root through `sudo`. Once
+your key works, close that with `sudo passwd -l gvpn`; key login keeps working.
+Verify the device's host key through a trusted channel before accepting it;
+[local access](local-access.md) covers that, a client configuration and how to
+add or replace keys on the device.
 
 `sudo gvpn-exit-status` should report `state: unprovisioned`, the tracked image
 and booted digest, firewall and netdata `ok`, Blokli, hoprd and WireGuard
@@ -321,8 +321,9 @@ echo are accepted.
 sudo gvpn-exit-provision identity
 ```
 
-This prints the node address, peer id and support public key;
-`sudo gvpn-exit-status` now shows `identity created, not finalized`. Then:
+This prints the node address (in EIP-55 checksum form, as every address the
+operator tools print), peer id and support public key; `sudo gvpn-exit-status`
+now shows `identity created, not finalized`. Then:
 
 1. Managed only: admit the support key on the bastion with the same restriction
    as the enrollment key. An unmanaged device prints the key as well; nothing
@@ -424,7 +425,7 @@ blocked.
 netdata, every setup:
 
 ```sh
-ssh -L 19999:127.0.0.1:19999 devops@DEVICE_IP   # then open http://127.0.0.1:19999
+ssh -L 19999:127.0.0.1:19999 gvpn@DEVICE_IP   # then open http://127.0.0.1:19999
 ```
 
 The support window, managed only:

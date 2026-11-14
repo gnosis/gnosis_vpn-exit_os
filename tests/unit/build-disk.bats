@@ -32,7 +32,7 @@ teardown() {
   cp "${REPO_ROOT}/tools/build-disk.sh" "${REPO_ROOT}/tools/lib.sh" "${REPO_ROOT}/tools/render-bib-config.sh" "${SANDBOX}/repo/tools/"
   cp "${REPO_ROOT}/image/versions.env" "${SANDBOX}/repo/image/"
   cp "${REPO_ROOT}/image/bib/iso.toml.in" "${SANDBOX}/repo/image/bib/"
-  echo "ssh-ed25519 AAAAC3NzaDevops ops@example" > "${SANDBOX}/devops.pub"
+  echo "ssh-ed25519 AAAAC3NzaOperator ops@example" > "${SANDBOX}/operator.pub"
   ssh-keygen -q -t ed25519 -N '' -f "${SANDBOX}/enroll"
   echo "bastion.example ssh-ed25519 AAAAC3NzaBastion" > "${SANDBOX}/known_hosts"
   # bootc-image-builder writes the ISO world-readable into the /output mount.
@@ -51,14 +51,14 @@ done'
 
   GVPN_BASTION=support@bastion.example GVPN_SUPPORT_PORT=22001 \
     GVPN_ENROLL_KEY="${SANDBOX}/enroll" GVPN_BASTION_KNOWN_HOSTS="${SANDBOX}/known_hosts" \
-    "${SANDBOX}/repo/tools/render-bib-config.sh" iso "${SANDBOX}/devops.pub" > "${SANDBOX}/repo/output/bastion.toml"
+    "${SANDBOX}/repo/tools/render-bib-config.sh" iso "${SANDBOX}/operator.pub" > "${SANDBOX}/repo/output/bastion.toml"
   run bash -c "cd '${SANDBOX}/repo' && tools/build-disk.sh iso output/bastion.toml"
   [ "${status}" -eq 0 ]
   [ "$(stat -c %a "${iso}")" = "600" ]
   grep -qx 'enrollment=bastion' "${iso}.target"
 
   unset GVPN_BASTION GVPN_SUPPORT_PORT GVPN_ENROLL_KEY GVPN_BASTION_KNOWN_HOSTS
-  "${SANDBOX}/repo/tools/render-bib-config.sh" iso "${SANDBOX}/devops.pub" > "${SANDBOX}/repo/output/lan.toml"
+  "${SANDBOX}/repo/tools/render-bib-config.sh" iso "${SANDBOX}/operator.pub" > "${SANDBOX}/repo/output/lan.toml"
   run bash -c "cd '${SANDBOX}/repo' && tools/build-disk.sh iso output/lan.toml"
   [ "${status}" -eq 0 ]
   [ "$(stat -c %a "${iso}")" = "644" ]

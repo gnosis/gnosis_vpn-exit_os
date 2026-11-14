@@ -19,7 +19,7 @@ not implemented, part of the [roadmap](docs/roadmap.md#fleet-and-onboarding).
 | `image/rootfs/usr/libexec/gvpn-exit/` | Bash runtime scripts; `lib.sh`, `checks.sh`, `public-ip.sh` are sourced helpers.                                                                                                                       |
 | `image/rootfs/usr/bin/`               | Operator CLIs: provisioning, support, status, hoprd address refresh and the hoprd v4-to-v5 migration.                                                                                                  |
 | `image/rootfs/usr/lib/greenboot/`     | Required software checks may trigger rollback; wanted connectivity checks cannot.                                                                                                                      |
-| `image/build/`                        | Build-time helpers (release download + GPG verify, blocklist snapshot, netdata repo, deployment configuration).                                                                                        |
+| `image/build/`                        | Build-time helpers (release download + GPG verify, blocklist snapshot, netdata repo, deployment configuration, OS name).                                                                               |
 | `image/bib/`                          | bootc-image-builder configs (installer ISO, QEMU qcow2).                                                                                                                                               |
 | `image/recovery/`                     | Recovery stick image: a Unified Kernel Image that adds operator keys to an appliance and opens a support window.                                                                                       |
 | `keys/`                               | Pinned public keys: HOPR + GnosisVPN release keys and the netdata repo key. The image-update key is operator-specific and comes in as `GVPN_COSIGN_PUB`, never from this repository.                   |
@@ -56,13 +56,12 @@ the VM harness needs x86_64 Linux with KVM (`cpu.bats` skips on Darwin because
   `GVPN_IMAGE_REPO` and `GVPN_COSIGN_PUB` (the public half of the key that signs
   the updates this image will accept).
 - `just iso` - unattended installer ISO for hardware and Incus VMs: your SSH key
-  for `devops`, plus the first-access tunnel for a managed device
-  (`GVPN_BASTION`, `GVPN_SUPPORT_PORT`, `GVPN_ENROLL_KEY`,
-  `GVPN_BASTION_KNOWN_HOSTS`: all four or none); `GVPN_INSTALL_DISK` defaults to
-  `auto` (the installer picks the only internal disk and stops when there is not
-  exactly one) or names the disk the kickstart wipes (`nvme0n1`, `sda`, `vda`).
-  `just iso-console` builds it with no SSH key: `devops` gets an expired
-  temporary console password instead.
+  for `gvpn`, plus the first-access tunnel for a managed device (`GVPN_BASTION`,
+  `GVPN_SUPPORT_PORT`, `GVPN_ENROLL_KEY`, `GVPN_BASTION_KNOWN_HOSTS`: all four
+  or none); `GVPN_INSTALL_DISK` defaults to `auto` (the installer picks the only
+  internal disk and stops when there is not exactly one) or names the disk the
+  kickstart wipes (`nvme0n1`, `sda`, `vda`). `just iso-console` builds it with
+  no SSH key: `gvpn` gets an expired temporary console password instead.
 - `just usb <device> [iso]` - write the built ISO, or the given one (a pulled
   `output/published-iso/install.iso`), to a whole USB disk after a typed
   confirmation; asks `sudo` and destroys that disk.

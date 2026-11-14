@@ -50,6 +50,17 @@ esac'
   [[ "${output}" == *"hoprd v5 is not configured yet"* ]]
 }
 
+# Updates reach provisioned devices only. A device whose devops account was
+# not renamed admits nobody over SSH, so that boot is red and greenboot rolls
+# back to the deployment that still knows devops.
+@test "a failed account rename is a red boot" {
+  units_check_setup
+  echo failed > "${UNIT_STATES}/gvpn-exit-account-migrate.service"
+  run "${UNITS_CHECK}"
+  [ "${status}" -eq 1 ]
+  [[ "${output}" == *"not active after 1s: gvpn-exit-account-migrate.service"* ]]
+}
+
 @test "every required and wanted check skips on an unprovisioned device" {
   for check in "${GREENBOOT}"/check/required.d/*.sh "${GREENBOOT}"/check/wanted.d/*.sh; do
     run "${check}"

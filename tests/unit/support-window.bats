@@ -188,11 +188,11 @@ request_file() {
 # the lines carrying the stick's marker to the window's deadline, and nothing
 # else in the file.
 keys_file() {
-  printf '%s\n' "${GVPN_DEVOPS_AUTHORIZED_KEYS}"
+  printf '%s\n' "${GVPN_OPERATOR_AUTHORIZED_KEYS}"
 }
 
 stick_keys() {
-  export GVPN_DEVOPS_AUTHORIZED_KEYS="${SANDBOX}/authorized_keys"
+  export GVPN_OPERATOR_AUTHORIZED_KEYS="${SANDBOX}/authorized_keys"
   cat >"$(keys_file)" <<'KEYS'
 ssh-ed25519 AAAApresent installer@laptop
 expiry-time="20270101Z" ssh-ed25519 AAAAoperator9 ops@laptop
@@ -229,13 +229,13 @@ KEYS
   grep -qx 'expiry-time="20000108Z" ssh-ed25519 AAAAoperator1 gvpn-recovery-20000101' "$(keys_file)"
 }
 
-@test "a recovery request opens the window when devops has no key file" {
-  export GVPN_DEVOPS_AUTHORIZED_KEYS="${SANDBOX}/missing/authorized_keys"
+@test "a recovery request opens the window when gvpn has no key file" {
+  export GVPN_OPERATOR_AUTHORIZED_KEYS="${SANDBOX}/missing/authorized_keys"
   request_file 7
   run "${LIBEXEC}/support-window.sh" enforce
   [ "${status}" -eq 0 ]
   [ "$(cat "${GVPN_STATE_DIR}/support-until")" = "2026-10-01T03:30:00Z" ]
-  [ ! -e "${GVPN_DEVOPS_AUTHORIZED_KEYS}" ]
+  [ ! -e "${GVPN_OPERATOR_AUTHORIZED_KEYS}" ]
 }
 
 # The timer and `gvpn-exit-support` both mutate the window, so they serialize

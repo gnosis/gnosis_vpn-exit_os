@@ -31,12 +31,12 @@ setup() {
   mkdir -p "${DEPLOY}/etc/gvpn-exit" \
     "${DEPLOY}/etc/ssh" \
     "${DEPLOY}/usr/lib" \
-    "${VAR}/home/devops/.ssh" \
+    "${VAR}/home/gvpn/.ssh" \
     "${VAR}/lib/gvpn-exit/identity" \
     "${VAR}/lib/gvpn-exit/state" \
     "${GVPN_RECOVERY_STICK}/gvpn-recovery"
   touch "${DEPLOY}.origin"
-  chmod 0700 "${VAR}/home/devops" "${VAR}/home/devops/.ssh"
+  chmod 0700 "${VAR}/home/gvpn" "${VAR}/home/gvpn/.ssh"
 
   echo 'SER8X0000000001' >"${VAR}/lib/gvpn-exit/identity/serial"
   cat >"${VAR}/lib/gvpn-exit/identity/node.json" <<'EOF'
@@ -48,8 +48,8 @@ BASTION=ops@bastion.example.org
 EOF
   echo 'ssh-ed25519 AAAAhostkey gvpn-exit-host' >"${DEPLOY}/etc/ssh/ssh_host_ed25519_key.pub"
   echo 'VERSION="v1.2.3"' >"${DEPLOY}/usr/lib/os-release"
-  echo 'ssh-ed25519 AAAApresent installer@laptop' >"${VAR}/home/devops/.ssh/authorized_keys"
-  chmod 0600 "${VAR}/home/devops/.ssh/authorized_keys"
+  echo 'ssh-ed25519 AAAApresent installer@laptop' >"${VAR}/home/gvpn/.ssh/authorized_keys"
+  chmod 0600 "${VAR}/home/gvpn/.ssh/authorized_keys"
 
   cat >"${GVPN_RECOVERY_STICK}/gvpn-recovery/authorized_keys" <<'EOF'
 # rendered by the bastion inventory
@@ -66,7 +66,7 @@ teardown() {
 }
 
 key_file() {
-  printf '%s\n' "${VAR}/home/devops/.ssh/authorized_keys"
+  printf '%s\n' "${VAR}/home/gvpn/.ssh/authorized_keys"
 }
 
 report() {
@@ -208,11 +208,32 @@ absent() {
   [ "$(stat -c %i "$(key_file)")" = "${inode}" ]
 }
 
-@test "the key file is owned like the devops home, not by a fixed uid" {
+@test "the key file is owned like the gvpn home, not by a fixed uid" {
   run "${RECOVERY}" run
   [ "${status}" -eq 0 ]
-  calls | grep -qx "chown $(stat -c %u:%g "${VAR}/home/devops") $(key_file)"
+  calls | grep -qx "chown $(stat -c %u:%g "${VAR}/home/gvpn") $(key_file)"
   absent '1000:1000' "${MOCK_LOG}"
+}
+
+# A device installed before the account was called `gvpn` keeps `devops`
+# until it boots an image that renames it; until then its sshd admits devops.
+@test "on a device that still has devops, the keys go to its home" {
+  mv "${VAR}/home/gvpn" "${VAR}/home/devops"
+  run "${RECOVERY}" run
+  [ "${status}" -eq 0 ]
+  [ ! -e "${VAR}/home/gvpn" ]
+  grep -q AAAAoperator1 "${VAR}/home/devops/.ssh/authorized_keys"
+  calls | grep -qx "chown $(stat -c %u:%g "${VAR}/home/devops") ${VAR}/home/devops/.ssh/authorized_keys"
+}
+
+# A renamed device keeps the old home path as a link for its previous
+# deployment; the keys go to the real home.
+@test "on a renamed device, the keys go to the gvpn home, not the old link" {
+  ln -s gvpn "${VAR}/home/devops"
+  run "${RECOVERY}" run
+  [ "${status}" -eq 0 ]
+  [ -L "${VAR}/home/devops" ]
+  grep -q AAAAoperator1 "$(key_file)"
 }
 
 @test "a key file that cannot be written fails loudly instead of reporting success" {
@@ -317,7 +338,7 @@ hook() {
 
 @test "the pre-pivot hook never shows success when apply fails" {
   hook pre-mount
-  rm -rf "${VAR}/home/devops"
+  rm -rf "${VAR}/home/gvpn"
   run hook pre-pivot
   grep -q 'GnosisVPN recovery: FAILED' "${GVPN_RECOVERY_CONSOLE}"
   absent 'SUCCESS' "${GVPN_RECOVERY_CONSOLE}"
@@ -381,7 +402,7 @@ hook() {
   [ "${status}" -eq 0 ]
   grep -q AAAAoperator1 "$(key_file)"
   [ "$(stat -c %a "$(key_file)")" = "600" ]
-  calls | grep -q "^chcon --reference=${VAR}/home/devops/.ssh"
+  calls | grep -q "^chcon --reference=${VAR}/home/gvpn/.ssh"
 }
 
 @test "a root without a gvpn-exit identity is refused" {

@@ -179,7 +179,7 @@ cmd_identity() {
 
 Identity created and sealed to this device's TPM.
 
-  node address   ${address}
+  node address   $(checksum_address "${address}")
   peer id        ${peer_id}
   serial         ${serial}
   support key    ${support_pub}
@@ -380,7 +380,7 @@ cmd_finalize() {
   echo
   echo "Provisioning record (keep it): the node address has to be on the GnosisVPN"
   echo "client destination list before clients use this exit (docs/first-install.md)."
-  cat "${GVPN_IDENTITY_DIR}/provisioning.json"
+  checksum_record < "${GVPN_IDENTITY_DIR}/provisioning.json"
   echo
   echo "Device provisioned. Reboot to start the exit node: sudo systemctl reboot"
 }
@@ -388,10 +388,10 @@ cmd_finalize() {
 cmd_status() {
   if is_provisioned; then
     echo "provisioned at $(< "${GVPN_IDENTITY_DIR}/provisioned")"
-    cat "${GVPN_IDENTITY_DIR}/provisioning.json"
+    checksum_record < "${GVPN_IDENTITY_DIR}/provisioning.json"
   elif [[ -s "${NODE_JSON}" ]]; then
     echo "identity created, not finalized"
-    cat "${NODE_JSON}"
+    checksum_record < "${NODE_JSON}"
   else
     echo "unprovisioned"
   fi

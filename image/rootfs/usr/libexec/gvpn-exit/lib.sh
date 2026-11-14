@@ -42,6 +42,37 @@ log() {
   echo "$*" >&2
 }
 
+# checksum_address ADDRESS
+# Print a 0x-prefixed 20-byte address in its EIP-55 checksum form, the mixed
+# case wallets and block explorers show, so an operator can compare it with
+# theirs. cast computes it, as it checks a new Safe address for the hoprd v5
+# migration. Anything else, and an address cast cannot convert, is printed as
+# given.
+checksum_address() {
+  local address="$1" checksummed
+  if [[ "${address}" =~ ^0x[0-9a-fA-F]{40}$ ]] \
+    && checksummed="$("${GVPN_CAST_BIN:-cast}" to-check-sum-address "${address}" 2>/dev/null)" \
+    && [[ "${checksummed,,}" == "${address,,}" ]]; then
+    printf '%s\n' "${checksummed}"
+  else
+    printf '%s\n' "${address}"
+  fi
+}
+
+# checksum_record < JSON
+# Print a node or provisioning record with its node, Safe and module addresses
+# in checksum form; the record on disk keeps them as written.
+checksum_record() {
+  local record key value
+  local -a named=()
+  record="$(cat)"
+  for key in node_address safe_address module_address; do
+    value="$(jq -r --arg key "${key}" '.[$key] // empty' <<< "${record}")"
+    [[ -n "${value}" ]] && named+=(--arg "${key}" "$(checksum_address "${value}")")
+  done
+  jq "${named[@]}" '. + $ARGS.named' <<< "${record}"
+}
+
 # Path of the uplink sample and probe outcome written by capacity.sh.
 capacity_file() {
   echo "${GVPN_CAPACITY_ENV:-${GVPN_STATE_DIR}/capacity.env}"

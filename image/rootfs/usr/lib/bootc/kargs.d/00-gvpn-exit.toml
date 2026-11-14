@@ -1,0 +1,4 @@
+# Default hostname. systemd takes the system.hostname credential, in the initrd
+# too, whenever /etc/hostname names no host; `hostnamectl hostname NAME` writes
+# /etc/hostname and wins. bootc adds these arguments on install and on update.
+kargs = ["systemd.set_credential=system.hostname:gvpn-exit"]

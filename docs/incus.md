@@ -60,7 +60,7 @@ On a Linux host with KVM:
 - The inputs for the installer you use
   ([getting the installer](first-install.md#3-get-the-installer)):
   `GVPN_IMAGE_REPO` and `GVPN_COSIGN_PUB` in every case; for a key-configured
-  build also `GVPN_DEVOPS_SSH_KEY`, whose private half you keep for
+  build also `GVPN_OPERATOR_SSH_KEY`, whose private half you keep for
   `VM_SSH_KEY`; for a managed build also the four bastion inputs.
 
 Run the commands in the devshell, like every other recipe. The `incus` commands
@@ -97,16 +97,18 @@ exit. `GVPN_INCUS_VM` names another instance; `GVPN_INCUS_IP_WAIT` is how many
 seconds `incus-run` waits for the guest's DHCP address (default 60, `0` for no
 wait).
 
-The installer is unattended and reboots when it is done. Leave the console with
-`Ctrl-a q`, then remove the installer and boot the installed disk:
+The installer is unattended and powers the VM off when it is done, which ends
+the console (`Ctrl-a q` leaves it earlier). Then remove the installer and boot
+the installed disk:
 
 ```sh
 nix develop -c just incus-run
 ```
 
-`incus-run` stops the installer, removes the `install` disk device and starts
-the VM again. The installed VM follows `<GVPN_IMAGE_REPO>:canary` for updates
-unless its ISO was built with `channel=stable`.
+`incus-run` removes the `install` disk device, stopping the VM first if it still
+runs, and starts the VM again. The installed VM follows
+`<GVPN_IMAGE_REPO>:canary` for updates unless its ISO was built with
+`channel=stable`.
 
 The VM has no Incus agent, so `incus exec` does not work. Use SSH or
 `just incus-console` (`Ctrl-a q` leaves it). If `just incus-ssh` reports no IPv4
@@ -120,7 +122,7 @@ next `just incus-install` gets a new virtual TPM and therefore a new identity.
 
 ### With a key in the installer
 
-A key-configured ISO (`just iso`) installs `GVPN_DEVOPS_SSH_KEY`. Reach the VM
+A key-configured ISO (`just iso`) installs `GVPN_OPERATOR_SSH_KEY`. Reach the VM
 with the matching private key:
 
 ```sh
@@ -128,8 +130,8 @@ export VM_SSH_KEY="$HOME/.ssh/id_ed25519"
 nix develop -c just incus-ssh
 ```
 
-`incus-ssh` looks up the address Incus learned from DHCP and connects as
-`devops`; `VM_SSH_KEY` supplies `-i`, or pass it to `just incus-ssh` yourself.
+`incus-ssh` looks up the address Incus learned from DHCP and connects as `gvpn`;
+`VM_SSH_KEY` supplies `-i`, or pass it to `just incus-ssh` yourself.
 
 ### On the console
 
@@ -142,11 +144,13 @@ nix develop -c just incus-console
 # or: incus console gvpn-exit
 ```
 
-Log in as `devops` with `gvpn-exit`, choose a new password and install your
-public key as [local access](local-access.md#first-access-on-the-console)
-describes, then leave the console with `Ctrl-a q` and continue with
-`just incus-ssh` as above. Anyone with access to the VM console can log in with
-that password; lock it with `sudo passwd -l devops` once your key works.
+The getty printed its login prompt at boot, before you attached, so the console
+stays blank until you press Enter. Log in as `gvpn` with `exit4gvpn`, choose a
+new password and install your public key as
+[local access](local-access.md#first-access-on-the-console) describes, then
+leave the console with `Ctrl-a q` and continue with `just incus-ssh` as above.
+Anyone with access to the VM console can log in with that password; lock it with
+`sudo passwd -l gvpn` once your key works.
 
 ## Provision and check
 
@@ -220,7 +224,7 @@ workstation's loopback. The reverse port is already there; the operator key is
 not one of the bastion's restricted device keys, so no `ssh -J` is needed:
 
 ```sh
-ssh -p "${GVPN_SUPPORT_PORT}" devops@127.0.0.1
+ssh -p "${GVPN_SUPPORT_PORT}" gvpn@127.0.0.1
 ```
 
 A real bastion is reached with `ssh -J` as its runbook shows. Stop the throwaway

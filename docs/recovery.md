@@ -2,19 +2,19 @@
 
 What to hand someone on site when an appliance answers no SSH key any more.
 
-A device installed from a key-configured ISO locks both the root and the devops
+A device installed from a key-configured ISO locks both the root and the `gvpn`
 password ([first-install.md](first-install.md) step 4) and its sshd accepts
-`devops` with a key only, so a keyboard and monitor at the device are not a way
+`gvpn` with a key only, so a keyboard and monitor at the device are not a way
 in. Neither is the bastion: it only forwards to the device's sshd. A
 console-configured device, on hardware or in a VM, can be reached on its console
-with the `devops` password as long as that password is not locked
+with the `gvpn` password as long as that password is not locked
 ([first access on the console](local-access.md#first-access-on-the-console)).
 When the keys on a device are wrong or missing, for instance on a device that
 never received the operator keys, somebody has to boot this stick.
 
 The stick is a single Unified Kernel Image on a FAT32 ESP, ~60 MB measured (18
 MB kernel, 42 MB initrd). It finds the appliance, adds the operators' public
-keys to `devops`, opens a seven-day support window and writes a report to the
+keys to `gvpn`, opens a seven-day support window and writes a report to the
 stick. It cannot install packages, repartition, reset passwords or repair a
 filesystem, and every refusal leaves the device untouched.
 
@@ -29,14 +29,17 @@ the most recently deployed deployment.
 
 | Path (as the running device sees it)        | Change                                                                                                                                                                                                                |
 | ------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `/var/home/devops/.ssh/authorized_keys`     | one line per operator key that is not present yet, with `expiry-time=` seven days out and the key comment `gvpn-recovery-<date>`; earlier `gvpn-recovery-` lines that expired or whose key left the stick are removed |
+| `/var/home/gvpn/.ssh/authorized_keys`       | one line per operator key that is not present yet, with `expiry-time=` seven days out and the key comment `gvpn-recovery-<date>`; earlier `gvpn-recovery-` lines that expired or whose key left the stick are removed |
 | `/var/lib/gvpn-exit/state/support-until`    | deadline from the appliance's own clock (best effort)                                                                                                                                                                 |
 | `/var/lib/gvpn-exit/state/recovery-request` | the day count; the timer rewrites the deadline and the key expiry from the trusted clock (below)                                                                                                                      |
 | the stick's `gvpn-recovery/report.txt`      | serial, bastion, support port and key, host key, what was added, any warning; a copy is kept as `report-<serial>-<time>.txt`                                                                                          |
 
+On a device installed before the account was called `gvpn` and not yet updated,
+the keys go to `/var/home/devops`, the account its sshd still admits.
+
 Nothing else is written. A key counts as present only on a plain line, without
 options and not commented out. The key file is rewritten in place, never
-replaced, and its owner and mode are set to `devops` and `0600` on every run, so
+replaced, and its owner and mode are set to `gvpn` and `0600` on every run, so
 the SELinux label is the only thing that stays as the installer left it.
 
 ## Why the support window has a marker
@@ -323,7 +326,7 @@ Then make the grant durable and tidy up:
 ## Security
 
 The stick carries public keys only, but it is still an authorization device: it
-writes root-owned files on any appliance it is booted on, and `devops` has
+writes root-owned files on any appliance it is booted on, and `gvpn` has
 passwordless sudo. Treat it like a key to the fleet:
 
 - Injected keys carry `expiry-time`, which bounds a normal recovery grant: the
@@ -354,7 +357,6 @@ dracut hooks run as intended under systemd as PID 1 with `root=tmpfs` is not
 proven yet. Booting the real image needs the Linux QEMU harness (`tools/vm.sh`)
 with the ESP attached as USB storage and a fresh OVMF variable store, asserting
 the green path, each refusal, the idempotent rerun, and a real
-`ssh -i <injected key> devops@…` on the installed disk afterwards. Two things
-only a real appliance can prove: that its firmware lists the stick as `UEFI:`
-and boots `\EFI\BOOT\BOOTX64.EFI`, and that the injected keys log in over the
-LAN.
+`ssh -i <injected key> gvpn@…` on the installed disk afterwards. Two things only
+a real appliance can prove: that its firmware lists the stick as `UEFI:` and
+boots `\EFI\BOOT\BOOTX64.EFI`, and that the injected keys log in over the LAN.

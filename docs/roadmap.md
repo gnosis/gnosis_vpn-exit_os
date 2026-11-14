@@ -90,9 +90,9 @@ passes end to end yet.
   how to treat `signature: null` from a provisioned device, alert after more
   than 6 hours of silence. The heartbeat has no peer count, because hoprd's API
   token exists only in hoprd's credential directory.
-- Operator access: a key-configured ISO embeds one devops key, the published ISO
-  starts console-only and each operator adds their own, and sshd trusts no user
-  CA, so revoking an operator touches every device. Ship an SSH CA
+- Operator access: a key-configured ISO embeds one operator key, the published
+  ISO starts console-only and each operator adds their own, and sshd trusts no
+  user CA, so revoking an operator touches every device. Ship an SSH CA
   (`TrustedUserCAKeys`) in the image so access rotates with signed updates.
 - Record the device's SSH host-key fingerprints and the TPM EK hash in the
   provisioning record, so operators can verify the host key as the runbook asks.

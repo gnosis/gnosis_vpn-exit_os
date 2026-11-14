@@ -145,6 +145,9 @@ provisioning_info() {
   fi
   if [[ -n "${record}" ]]; then
     while IFS=$'\t' read -r label value; do
+      if [[ "${label}" == *" address" ]]; then
+        value="$(checksum_address "${value}")"
+      fi
       field "${label}" "${value}"
     done < <(jq -r '[
         ["node address", .node_address], ["peer id", .peer_id],
@@ -438,7 +441,7 @@ netdata() {
   report_probe "api" netdata-unreachable "http://127.0.0.1:${NETDATA_PORT}/api/v1/info"
   local lan
   lan="$(lan_ip 2>/dev/null || true)"
-  field "dashboard" "ssh -L ${NETDATA_PORT}:127.0.0.1:${NETDATA_PORT} ${SUDO_USER:-devops}@${lan:-<device-ip>}, then http://127.0.0.1:${NETDATA_PORT}"
+  field "dashboard" "ssh -L ${NETDATA_PORT}:127.0.0.1:${NETDATA_PORT} ${SUDO_USER:-gvpn}@${lan:-<device-ip>}, then http://127.0.0.1:${NETDATA_PORT}"
 }
 
 main() {

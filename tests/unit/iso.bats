@@ -11,8 +11,14 @@ setup() {
   export ORIGIN="${SANDBOX}/origin"
   mkdir -p "${WORK}"
   cp -a "${REPO_ROOT}/tools" "${REPO_ROOT}/image" "${REPO_ROOT}/keys" "${REPO_ROOT}/justfile" "${WORK}/"
+  # tools/brand-iso.sh rewrites a real ISO with xorriso (brand-iso.bats); here
+  # it records the ISO the recipe hands it.
+  cat > "${WORK}/tools/brand-iso.sh" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$@" >> "${SANDBOX}/branded"
+EOF
   ssh-keygen -q -t ed25519 -N '' -f "${SANDBOX}/enroll"
-  export GVPN_DEVOPS_SSH_KEY="${SANDBOX}/enroll.pub"
+  export GVPN_OPERATOR_SSH_KEY="${SANDBOX}/enroll.pub"
   export GVPN_ENROLL_KEY="${SANDBOX}/enroll"
   export GVPN_BASTION="support@bastion.example.org"
   export GVPN_SUPPORT_PORT=22001
@@ -182,6 +188,21 @@ teardown() {
   [ ! -e "${WORK}/output/iso/install.iso.target" ]
 }
 
+# bootc-image-builder titles the installer menu with the Fedora release, which
+# tools/brand-iso.sh drops; a qcow2 build has no installer menu.
+@test "the disk build hands each installer ISO, and nothing else, to brand-iso" {
+  unset GVPN_BASTION GVPN_SUPPORT_PORT GVPN_ENROLL_KEY GVPN_BASTION_KNOWN_HOSTS
+  run just --justfile "${WORK}/justfile" iso-console-only
+  echo "${output}"
+  [ "${status}" -eq 0 ]
+  [ "$(cat "${SANDBOX}/branded")" = "output/iso/install.iso" ]
+  rm "${SANDBOX}/branded"
+  run just --justfile "${WORK}/justfile" qcow2
+  echo "${output}"
+  [ "${status}" -eq 0 ]
+  [ ! -e "${SANDBOX}/branded" ]
+}
+
 @test "iso refuses an image without a version label" {
   mock_cmd podman 'case "$1" in image) echo "sha256:1d1d1d " ;; esac'
   run just --justfile "${WORK}/justfile" iso-console-only
@@ -216,10 +237,10 @@ teardown() {
   [ "${status}" -eq 0 ]
   grep -qx 'disk=auto' "${WORK}/output/iso/install.iso.target"
   grep -qx 'access=console' "${WORK}/output/iso/install.iso.target"
-  grep -q 'user --name=devops --groups=wheel --iscrypted --password' "${SANDBOX}/bib-config.toml"
-  run grep -q 'sshkey --username=devops' "${SANDBOX}/bib-config.toml"
+  grep -q 'user --name=gvpn --groups=wheel --iscrypted --password' "${SANDBOX}/bib-config.toml"
+  run grep -q 'sshkey --username=gvpn' "${SANDBOX}/bib-config.toml"
   [ "${status}" -eq 1 ]
-  grep -q 'chage -d 0 devops' "${SANDBOX}/bib-config.toml"
+  grep -q 'chage -d 0 gvpn' "${SANDBOX}/bib-config.toml"
   grep -q 'systemctl enable serial-getty@ttyS0.service' "${SANDBOX}/bib-config.toml"
 }
 

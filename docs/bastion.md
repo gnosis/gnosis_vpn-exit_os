@@ -130,7 +130,7 @@ tunnel, and you revoke the enrollment key.
 ## Reaching a device
 
 ```sh
-ssh -J gvpn-bastion@bastion.example.org:2222 -p 22001 devops@127.0.0.1
+ssh -J gvpn-bastion@bastion.example.org:2222 -p 22001 gvpn@127.0.0.1
 ```
 
 Without `-J` (a jump host that may not resolve `127.0.0.1` where you expect),
@@ -138,7 +138,7 @@ two steps work as well:
 
 ```sh
 ssh -N -L 22001:127.0.0.1:22001 gvpn-bastion@bastion.example.org -p 2222 &
-ssh -p 22001 devops@127.0.0.1
+ssh -p 22001 gvpn@127.0.0.1
 ```
 
 A device is reachable this way only while its support window is open

@@ -34,17 +34,17 @@ SSH_KEY_ARGS=()
 [[ -n "${VM_SSH_KEY:-}" ]] && SSH_KEY_ARGS=(-i "${VM_SSH_KEY}")
 FAILURES=0
 
-# ssh_devops HOST PORT COMMAND...: devops on the VM through HOST:PORT.
-ssh_devops() {
+# ssh_gvpn HOST PORT COMMAND...: gvpn on the VM through HOST:PORT.
+ssh_gvpn() {
   local host="$1" port="$2"
   shift 2
   ssh -q -p "${port}" "${SSH_KEY_ARGS[@]}" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
-    -o ConnectTimeout=5 -o BatchMode=yes devops@"${host}" "$@"
+    -o ConnectTimeout=5 -o BatchMode=yes gvpn@"${host}" "$@"
 }
 
 # Through QEMU's hostfwd, or the Incus bridge address, the LAN path.
 vm() {
-  ssh_devops "${SSH_HOST}" "${SSH_PORT}" "$@"
+  ssh_gvpn "${SSH_HOST}" "${SSH_PORT}" "$@"
 }
 
 # The device answers through its reverse tunnel on the bastion. After a boot
@@ -59,7 +59,7 @@ vm() {
 reachable_through_bastion() {
   local deadline=$((SECONDS + ${VM_BASTION_WAIT:-300})) expected
   expected="$(vm cat /etc/machine-id)" || return 1
-  until [[ "$(ssh_devops "${BASTION_HOST}" "${SUPPORT_PORT}" cat /etc/machine-id 2>/dev/null)" == "${expected}" ]]; do
+  until [[ "$(ssh_gvpn "${BASTION_HOST}" "${SUPPORT_PORT}" cat /etc/machine-id 2>/dev/null)" == "${expected}" ]]; do
     (( SECONDS < deadline )) || return 1
     sleep 15
   done
@@ -282,6 +282,15 @@ rps_enabled() {
   vm cat "/sys/class/net/$1/queues/rx-0/rps_cpus" | grep -q '[1-9a-f]'
 }
 
+# The boot menu entry of the running deployment is titled $1: ostree takes the
+# deployment's PRETTY_NAME and appends "(ostree:N)".
+boot_entry_titled() {
+  local title
+  # shellcheck disable=SC2016 # expanded on the device
+  title="$(vm_root_bash 'grep -lFw -- "$(grep -o "ostree=[^ ]*" /proc/cmdline)" /boot/loader/entries/*.conf | xargs sed -n "s/^title //p"')" || return 1
+  [[ "${title}" == "$1 (ostree:"* ]] || { echo "${title}"; return 1; }
+}
+
 common_checks() {
   check "uplink renamed to lan0" vm ip -br link show lan0 '>/dev/null'
   check "lan0 steers received packets to other CPUs" rps_enabled lan0
@@ -305,6 +314,7 @@ common_checks() {
   # shellcheck disable=SC2016 # expanded on the device
   check "operator diagnostics installed" \
     vm 'for tool in ethtool top htop atop; do command -v "${tool}" >/dev/null || exit 1; done'
+  check "account rename ran" unit_active gvpn-exit-account-migrate.service
   check "sshd listens on the lan0 address and loopback only" sshd_on_lan0_and_loopback
   check "session target alias on lo" session_target_on_lo
   check "firewall loaded" unit_active gvpn-exit-firewall.service
@@ -314,6 +324,9 @@ common_checks() {
   check "INPUT isolation" device_check 'load_exit_env; iptables -S INPUT | input_isolation_ok'
   check "IPv6 locked down" device_check 'ip6tables -S | ip6_policies_drop'
   check "host IPv6 disabled" [ "$(vm cat /proc/sys/net/ipv6/conf/all/disable_ipv6)" = "1" ]
+  check "only critical kernel messages reach the console" [ "$(vm cut -f1 /proc/sys/kernel/printk)" = "3" ]
+  check "the device is named gvpn-exit" [ "$(vm cat /proc/sys/kernel/hostname)" = "gvpn-exit" ]
+  check "the boot menu says GnosisVPN ExitOS" boot_entry_titled "GnosisVPN ExitOS"
   check "node_exporter on loopback only" loopback_only_listener 9100
   check "netdata on loopback only" loopback_only_listener 19999
   check "blocklist cache seeded" vm sudo test -s /var/lib/gvpn-blocklist/blocklist.cidr
@@ -361,7 +374,7 @@ cmd_unprovisioned() {
 cmd_enroll() {
   wait_for_vm
   check "enroll-tunnel.service running" unit_active enroll-tunnel.service
-  check "devops reachable through the bastion" reachable_through_bastion
+  check "gvpn reachable through the bastion" reachable_through_bastion
 }
 
 cmd_provision() {
@@ -426,7 +439,7 @@ cmd_provisioned() {
   check "enroll-tunnel.service inactive by condition" unit_condition_failed enroll-tunnel.service
   # The tunnel starts with support-tunnel-expire.timer about 2 min after boot,
   # so wait for it to answer before asking whether the unit runs.
-  check "devops reachable through the bastion" reachable_through_bastion
+  check "gvpn reachable through the bastion" reachable_through_bastion
   check "support-tunnel.service running with the sealed key" unit_active support-tunnel.service
   check "gvpn-exit-status reports provisioned" status_reports 'state: +provisioned at'
   common_checks
@@ -537,7 +550,7 @@ cmd_update() {
   for unit in gvpn-exit-data-guard.service gnosisvpn-server.service hoprd.service; do
     check "${unit} active" unit_active "${unit}"
   done
-  check "devops reachable through the bastion" reachable_through_bastion
+  check "gvpn reachable through the bastion" reachable_through_bastion
   check "gvpn-exit-status reports provisioned" status_reports 'state: +provisioned at'
 
   # Regression for download-only staging vs greenboot's rollback trigger: the

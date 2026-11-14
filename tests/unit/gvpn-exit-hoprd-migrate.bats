@@ -92,10 +92,14 @@ setup() {
 mock_default_cast() {
   echo 7000000000000000000 > "${SANDBOX}/token-balance"
   echo 200000000000000000 > "${SANDBOX}/native-balance"
+  # The checksum form comes from the devshell's cast, the version the image
+  # ships, unless a test sets CHECKSUM_FORM; every other cast call is mocked.
+  REAL_CAST="${REAL_CAST:-$(command -v cast)}"
+  export REAL_CAST
   mock_cmd cast '
     [[ -z "${ETH_RPC_URL:-}" ]] || echo "$1 ${ETH_RPC_URL}" >> "${SANDBOX}/cast-rpc-env"
     case "$*" in
-      to-check-sum-address\ *) echo "${CHECKSUM_FORM:-$2}" ;;
+      to-check-sum-address\ *) if [[ -n "${CHECKSUM_FORM:-}" ]]; then echo "${CHECKSUM_FORM}"; else "${REAL_CAST}" to-check-sum-address "$2"; fi ;;
       code\ *) echo "${TARGET_CODE-0x6080}" ;;
       call\ 0x3333*"getThreshold()(uint256)"*) [[ -z "${TARGET_NOT_SAFE:-}" ]] || exit 1; echo 1 ;;
       *"getThreshold()(uint256)"*) echo 1 ;;
@@ -254,6 +258,18 @@ refute_logged() {
   run "${MIGRATE}" status
   [[ "${output}" == *"${NEW_SAFE}"* ]]
   [[ "${output}" == *"migrated at:"* ]]
+}
+
+# Stored as the operator gave them, printed in EIP-55 checksum form (test
+# vectors of EIP-55).
+@test "status prints the v5 Safe and module in checksum form" {
+  "${MIGRATE}" configure-v5 --safe-address 0xfb6916095ca1df60bb79ce92ce3ea74c37c5d359 \
+    --module-address 0xDBF03B407C01E7CD3CBEA99509D93F8DDDC8C6FB --blokli-url "${BLOKLI}"
+  run "${MIGRATE}" status
+  [ "${status}" -eq 0 ]
+  grep -qx 'v5 safe: *0xfB6916095ca1df60bB79Ce92cE3Ea74c37c5d359' <<< "${output}"
+  grep -qx 'v5 module: *0xdbF03B407c01E7cD3CBea99509d93f8DDDC8C6FB' <<< "${output}"
+  grep -qx 'HOPRD_SAFE_ADDRESS=0xfb6916095ca1df60bb79ce92ce3ea74c37c5d359' "${GVPN_HOPRD_ENV_DIR}/10-provisioned.env"
 }
 
 # A curl mock that walks the outgoing channel through the two closure phases:
@@ -500,14 +516,17 @@ mock_two_phase_curl() {
 }
 
 @test "reusing the old Safe moves nothing, needs no owner key and completes" {
-  local old_lower="0xabcdefabcdefabcdefabcdefabcdefabcdefabcd"
-  local old_mixed="0xABCDEFabcdefabcdefabcdefabcdefabcdefabcd"
+  # An EIP-55 test vector: provisioned in lower case, given back in upper
+  # case, printed in its checksum form.
+  local old_lower="0xd1220a0cf47c7b9be7a2e6ba89f429762e7b9adb"
+  local old_mixed="0xD1220A0CF47C7B9BE7A2E6BA89F429762E7B9ADB"
+  local old_checksummed="0xD1220A0cf47c7B9Be7A2E6BA89F429762e7b9aDb"
   printf 'HOPRD_SAFE_ADDRESS=%s\nHOPRD_MODULE_ADDRESS=%s\nHOPRD_BLOKLI_URL=%s\n' \
     "${old_lower}" "${OLD_MODULE}" "${BLOKLI}" > "${GVPN_HOPRD_V4_ENV_DIR}/10-provisioned.env"
   unset GVPN_SAFE_OWNER_KEYSTORE GVPN_SAFE_OWNER_PASSWORD_FILE GVPN_PROVIDER_URL
   run "${MIGRATE}" migrate --safe-address "${old_mixed}" --module-address "${NEW_MODULE}" --wait 0
   [ "${status}" -eq 0 ]
-  [[ "${output}" == *"is the old Safe"* ]]
+  [[ "${output}" == *"${old_checksummed} is the old Safe"* ]]
   refute_logged '^cast send '
   [ "$(grep -c 'X DELETE' "${MOCK_LOG}")" -eq 2 ]
   grep -qx "HOPRD_SAFE_ADDRESS=${old_mixed}" "${GVPN_HOPRD_ENV_DIR}/10-provisioned.env"

@@ -6,7 +6,7 @@ set shell := ["bash", "-euo", "pipefail", "-c"]
 set positional-arguments := true
 
 image_tag := "localhost/gvpn-exit-os:dev"
-ssh_key := env_var_or_default("GVPN_DEVOPS_SSH_KEY", "ssh_id.pub")
+ssh_key := env_var_or_default("GVPN_OPERATOR_SSH_KEY", "ssh_id.pub")
 # An empty GVPN_INSTALL_DISK is the same as an unset one.
 install_disk := if env_var_or_default("GVPN_INSTALL_DISK", "") == "" { "auto" } else { env_var_or_default("GVPN_INSTALL_DISK", "auto") }
 channel := "canary"
@@ -41,7 +41,7 @@ build:
     image/build/configure-image.sh
     GVPN_IMAGE_VERSION="$(git describe --tags --always --dirty)" tools/builder.sh tools/build-image.sh {{image_tag}}
 
-# One installer serves hardware and an Incus VM. The devops key is always
+# One installer serves hardware and an Incus VM. The operator key is always
 # included; the bastion tunnel inputs GVPN_BASTION, GVPN_SUPPORT_PORT,
 # GVPN_ENROLL_KEY and GVPN_BASTION_KNOWN_HOSTS (tools/render-bib-config.sh)
 # make it a managed installer when given all together, without them it is
@@ -82,14 +82,19 @@ qcow2: build (_disk "qcow2" install_disk "0")
 
 # render the bib config on the host (key files may live outside the repo),
 # then build the disk in the builder; the rendered config never outlives it.
-# tools/build-disk.sh writes the version and target sidecars of an ISO.
+# tools/build-disk.sh writes the version and target sidecars of an ISO;
+# tools/brand-iso.sh then drops the Fedora release from its boot menu on the
+# host, where the devshell has the tools.
 _disk kind disk console:
     mkdir -p output
     config="$(mktemp -p output .bib-{{kind}}-XXXXXX.toml)"; \
       trap 'rm -f "${config}"' EXIT; \
       GVPN_CONSOLE_ACCESS={{quote(console)}} GVPN_INSTALL_DISK={{quote(disk)}} \
         tools/render-bib-config.sh {{quote(kind)}} {{quote(ssh_key)}} > "${config}"; \
-      SOURCE_TAG={{image_tag}} tools/builder.sh tools/build-disk.sh {{quote(kind)}} "${config}" {{quote(channel)}}
+      SOURCE_TAG={{image_tag}} tools/builder.sh tools/build-disk.sh {{quote(kind)}} "${config}" {{quote(channel)}}; \
+      if [[ {{quote(kind)}} == iso ]]; then \
+        for iso in $(find output/iso -type f -name '*.iso'); do tools/brand-iso.sh "${iso}"; done; \
+      fi
 
 # publish the installer ISO signed as <version>-<channel> and move the channel it was built for to it
 publish-iso version="":
@@ -126,7 +131,7 @@ incus-install-published ref:
 incus-run:
     tools/incus.sh run
 
-# ssh into the running Incus VM as devops (pass -i if your agent has no key)
+# ssh into the running Incus VM as gvpn (pass -i if your agent has no key)
 incus-ssh *args:
     tools/incus.sh ssh "$@"
 
@@ -146,9 +151,9 @@ vm-install:
 vm-run:
     tools/vm.sh run
 
-# ssh into the running QEMU VM as devops
+# ssh into the running QEMU VM as gvpn
 vm-ssh *args:
-    ssh -p 2222 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null devops@127.0.0.1 "$@"
+    ssh -p 2222 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null gvpn@127.0.0.1 "$@"
 
 # integration tests against the running QEMU VM (unprovisioned|enroll|provision|provisioned|address|update)
 test-integration phase:

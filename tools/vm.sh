@@ -60,7 +60,7 @@ cmd_install() {
   cp "${OVMF_VARS}" "${VARS}"
   chmod u+w "${VARS}"
   start_swtpm
-  echo "installing ${iso} (serial log: ${VM_DIR}/install.log); QEMU exits when the installer reboots"
+  echo "installing ${iso} (serial log: ${VM_DIR}/install.log); QEMU exits when the installer powers off"
   qemu -cdrom "${iso}" -boot once=d -no-reboot -display none -serial "file:${VM_DIR}/install.log"
   echo "installed into ${DISK}"
 }

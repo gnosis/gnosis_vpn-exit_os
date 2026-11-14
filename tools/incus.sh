@@ -6,7 +6,7 @@
 #
 #   tools/incus.sh install [ISO]   fresh VM, boot the unattended installer
 #   tools/incus.sh run             detach the ISO, boot the installed disk
-#   tools/incus.sh ssh [ARGS...]   ssh as devops to the VM's bridge address
+#   tools/incus.sh ssh [ARGS...]   ssh as gvpn to the VM's bridge address
 #   tools/incus.sh ip              print that address
 #   tools/incus.sh console         attach to the serial console (leave: Ctrl-a q)
 #   tools/incus.sh destroy         delete the VM, its disk and its vTPM
@@ -107,7 +107,7 @@ cmd_install() {
   incus config device add "${NAME}" install disk source="${iso}" boot.priority=5
 
   echo "installing ${iso} into Incus VM '${NAME}'"
-  echo "the installer reboots when done; leave the console with Ctrl-a q, then run: just incus-run"
+  echo "the installer powers the VM off when done, which ends the console (leave it earlier with Ctrl-a q); then run: just incus-run"
   incus start "${NAME}" --console
 }
 
@@ -137,8 +137,9 @@ cmd_run() {
   # alone instead of killing it.
   if incus config device list "${NAME}" | grep -qx install; then
     if [[ "${status}" == "Running" ]]; then
-      # The installer reboot may already have reached the installed system;
-      # ask it to stop first, then force only if that does not finish.
+      # The installer powers the VM off when done; one still running is
+      # either installing or was started again since. Ask it to stop first,
+      # then force only if that does not finish.
       incus stop "${NAME}" --timeout=60 >/dev/null 2>&1 \
         || incus stop "${NAME}" --force >/dev/null 2>&1 || true
     fi
@@ -150,7 +151,7 @@ cmd_run() {
   fi
   echo "booting Incus VM '${NAME}'"
   if ip="$(wait_for_ip)"; then
-    echo "ssh: just incus-ssh   (devops@${ip})"
+    echo "ssh: just incus-ssh   (gvpn@${ip})"
   else
     echo "no IPv4 address yet; check: incus list ${NAME}"
   fi
@@ -163,12 +164,15 @@ cmd_ssh() {
   ip="$(cmd_ip)"
   [[ -n "${VM_SSH_KEY:-}" ]] && key_args=(-i "${VM_SSH_KEY}")
   exec ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
-    "${key_args[@]}" "devops@${ip}" "$@"
+    "${key_args[@]}" "gvpn@${ip}" "$@"
 }
 
 cmd_console() {
   require_incus
   require_instance
+  # The serial getty printed its prompt at boot, before anyone attached, and
+  # prints it again only after a key press.
+  echo "attaching to ${NAME}'s serial console: press Enter for the login prompt, Ctrl-a q to leave"
   incus console "${NAME}"
 }
 

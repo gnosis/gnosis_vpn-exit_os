@@ -69,7 +69,7 @@ GnosisVPN client -> HOPR session -> hoprd
                                                           |
                                                 MASQUERADE -> lan0
 
-Operator -> bastion loopback port -> reverse SSH tunnel -> device sshd -> devops (sudo)
+Operator -> bastion loopback port -> reverse SSH tunnel -> device sshd -> gvpn (sudo)
 ```
 
 - `172.30.0.1` is the client's built-in session target; it sits on `lo`, so no
@@ -350,9 +350,9 @@ across steps.
 
 ## Operator access and support
 
-- **sshd**: only `devops`, only keys. Root and devops passwords are locked,
-  except on a console-configured ISO (temporary console password, expired on
-  first login; the console stays a way in until `sudo passwd -l devops`).
+- **sshd**: only `gvpn`, only keys. Root and `gvpn` passwords are locked, except
+  on a console-configured ISO (temporary console password, expired on first
+  login; the console stays a way in until `sudo passwd -l gvpn`).
 - **`enroll-tunnel.service`**: installer key, unprovisioned devices only.
 - **`support-tunnel.service`**: TPM-sealed support key, only while
   `state/support-until` is in the future **and** the clock is NTP-synced.

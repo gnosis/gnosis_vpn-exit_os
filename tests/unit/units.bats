@@ -73,6 +73,18 @@ unit_text() {
   done
 }
 
+# sshd and the console admit `gvpn` only, so a device installed with
+# `devops` is renamed before anyone can log in, whether provisioned or not.
+@test "the account rename runs unprovisioned, before sshd and console logins" {
+  local text
+  text="$(unit_text gvpn-exit-account-migrate.service)"
+  ! grep -q 'identity/provisioned' <<< "${text}"
+  grep -qx 'Before=sshd.service systemd-user-sessions.service' <<< "${text}"
+  grep -qx 'RemainAfterExit=yes' <<< "${text}"
+  sed -n '/^RUN systemctl enable/,/systemctl mask/p' "${REPO_ROOT}/image/Containerfile" \
+    | grep -q 'gvpn-exit-account-migrate.service'
+}
+
 @test "gnosis_vpn-server waits for the session target alias" {
   local text
   text="$(unit_text gnosisvpn-server.service)"

@@ -142,8 +142,7 @@ promotion to `stable` on.
 
 The published ISO is unmanaged, picks its install disk at install time and
 carries no SSH key: the operator logs in on the console with the expired
-temporary `devops` password, sets their own password and installs their public
-key
+temporary `gvpn` password, sets their own password and installs their public key
 ([first access on the console](local-access.md#first-access-on-the-console)).
 The publish refuses an ISO whose target sidecar is not `disk=auto`,
 `enrollment=none` and `access=console`, or names no channel. Build a per-device

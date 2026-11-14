@@ -133,12 +133,13 @@ RUN first="$(grep -m1 -v '^[[:space:]]*$' /etc/pki/containers/gvpn-exit-os.pub |
 
 ARG GVPN_IMAGE_REPO
 RUN --mount=type=bind,source=image/build,target=/build \
-    /build/configure-image.sh /
+    /build/configure-image.sh / \
+ && /build/brand-os-release.sh /usr/lib/os-release
 
 # git only tracks the executable bit
 RUN chmod 0600 /etc/NetworkManager/system-connections/lan0.nmconnection \
- && chmod 0440 /etc/sudoers.d/90-gvpn-exit-devops \
- && visudo -cf /etc/sudoers.d/90-gvpn-exit-devops
+ && chmod 0440 /etc/sudoers.d/90-gvpn-exit \
+ && visudo -cf /etc/sudoers.d/90-gvpn-exit
 
 # Smoke-test the shipped binaries and validate the hoprd config the way hoprd
 # will see it (placeholders for the per-device values). An OCI tag cannot carry
@@ -165,6 +166,7 @@ RUN test "$(hoprd --version)" = "hoprd ${HOPRD_VERSION/-pr./+pr.}" \
 RUN systemctl enable \
       gvpn-exit-firewall.service \
       gvpn-exit-loopback-alias.service \
+      gvpn-exit-account-migrate.service \
       hoprd.service gnosisvpn-server.service \
       gvpn-blocklist-boot.service gvpn-blocklist-refresh.timer \
       gvpn-exit-netprobe.timer gvpn-exit-heartbeat.timer \

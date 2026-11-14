@@ -192,7 +192,7 @@ require_safe_transfer() {
   owner="$("${CAST_BIN}" wallet address "${WALLET_ARGS[@]}")" \
     || die "cannot open the Safe owner keystore; check the keystore and its password file"
   [[ "$(cast_call "${OLD_SAFE}" "isOwner(address)(bool)" "${owner}")" == true ]] \
-    || die "${owner} is not an owner of the old Safe ${OLD_SAFE}"
+    || die "${owner} is not an owner of the old Safe $(checksum_address "${OLD_SAFE}")"
   local owner_balance
   owner_balance="$(cast_rpc balance "${owner}" | awk 'NR == 1 { print $1 }')"
   balance_is_zero "${owner_balance}" \
@@ -570,7 +570,7 @@ move_target_token() {
   data="$("${CAST_BIN}" calldata "transfer(address,uint256)" "${target}" "${amount}")"
   safe_transaction "${HOPR_TOKEN_ADDRESS}" 0 "${data}"
   require_safe_drained wxHOPR safe_token_balance
-  log "moved ${amount} wei wxHOPR from the old v4 Safe to ${target}"
+  log "moved ${amount} wei wxHOPR from the old v4 Safe to $(checksum_address "${target}")"
 }
 
 # move_target_native AMOUNT TARGET: native xDai transfer out of the old Safe.
@@ -578,7 +578,7 @@ move_target_native() {
   local amount="$1" target="$2"
   safe_transaction "${target}" "${amount}" 0x
   require_safe_drained xDai safe_native_balance
-  log "moved ${amount} wei xDai from the old v4 Safe to ${target}"
+  log "moved ${amount} wei xDai from the old v4 Safe to $(checksum_address "${target}")"
 }
 
 move_v4_safe_funds() {
@@ -587,7 +587,7 @@ move_v4_safe_funds() {
   if same_address "${target}" "${OLD_SAFE}"; then
     # A transfer of the whole balance to the Safe that holds it leaves the
     # balance where it is and can never read back as moved.
-    log "${target} is the old Safe; its funds stay where they are"
+    log "$(checksum_address "${target}") is the old Safe; its funds stay where they are"
     return 0
   fi
   require_fund_move "${target}"
@@ -792,8 +792,8 @@ cmd_status() {
   echo "v5 data:        ${GVPN_HOPRD_DATA}"
   echo "v5 env:         ${V5_ENV_FILE}"
   if [[ -f "${V5_ENV_FILE}" ]]; then
-    echo "v5 safe:        $(sed -n 's/^HOPRD_SAFE_ADDRESS=//p' "${V5_ENV_FILE}")"
-    echo "v5 module:      $(sed -n 's/^HOPRD_MODULE_ADDRESS=//p' "${V5_ENV_FILE}")"
+    echo "v5 safe:        $(checksum_address "$(sed -n 's/^HOPRD_SAFE_ADDRESS=//p' "${V5_ENV_FILE}")")"
+    echo "v5 module:      $(checksum_address "$(sed -n 's/^HOPRD_MODULE_ADDRESS=//p' "${V5_ENV_FILE}")")"
   else
     echo "v5 safe:        not configured yet (hoprd is held stopped)"
   fi

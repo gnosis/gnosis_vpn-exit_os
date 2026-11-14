@@ -6,9 +6,14 @@
 
 load helpers
 
-NODE_ADDRESS="0x1234567890abcdef1234567890abcdef12345678"
-SAFE="0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-MODULE="0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+# Stored as hopli and the operator give them; printed in their EIP-55
+# checksum form (test vectors of EIP-55).
+NODE_ADDRESS="0x5aaeb6053f3e94c9b9a09f33669435e7ef1beaed"
+NODE_CHECKSUMMED="0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAed"
+SAFE="0xfb6916095ca1df60bb79ce92ce3ea74c37c5d359"
+SAFE_CHECKSUMMED="0xfB6916095ca1df60bB79Ce92cE3Ea74c37c5d359"
+MODULE="0xdbf03b407c01e7cd3cbea99509d93f8dddc8c6fb"
+MODULE_CHECKSUMMED="0xdbF03B407c01E7cD3CBea99509d93f8DDDC8C6FB"
 
 setup() {
   setup_sandbox
@@ -113,7 +118,7 @@ esac"
   [ "$(jq -r .wg_public_key "${GVPN_IDENTITY_DIR}/node.json")" = "cHVibGljIGtleSBvZiB0aGUgd2lyZWd1YXJkIHNlcnY=" ]
   [ "$(jq -r .support_public_key "${GVPN_IDENTITY_DIR}/node.json")" = "ssh-ed25519 AAAA support" ]
   [ "$(cat "${GVPN_IDENTITY_DIR}/serial")" = "SER8-0001" ]
-  [[ "${output}" == *"${NODE_ADDRESS}"* ]]
+  [[ "${output}" == *"node address   ${NODE_CHECKSUMMED}"* ]]
 }
 
 @test "identity falls back to the machine id when the firmware has no serial" {
@@ -229,6 +234,26 @@ evil'
   [ "$(jq -r .exit.gnosis_vpn_server "${record}")" = "172.30.0.1:8000" ]
   [ "$(jq -r .exit.wireguard_server "${record}")" = "172.30.0.1:51820" ]
   [ "$(jq -r .exit.location "${record}")" = "Berlin, DE" ]
+}
+
+# The operator copies the printed record; its addresses are in the checksum
+# form their wallet shows, while the stored record keeps them as given.
+@test "finalize and status print the record with its addresses in checksum form" {
+  "${CLI}" identity
+  run "${CLI}" status
+  [ "$(sed -n '2,$p' <<< "${output}" | jq -r .node_address)" = "${NODE_CHECKSUMMED}" ]
+  run finalize
+  [ "${status}" -eq 0 ]
+  local printed
+  printed="$(sed -n '/^{/,/^}/p' <<< "${output}")"
+  [ "$(jq -r .node_address <<< "${printed}")" = "${NODE_CHECKSUMMED}" ]
+  [ "$(jq -r .safe_address <<< "${printed}")" = "${SAFE_CHECKSUMMED}" ]
+  [ "$(jq -r .module_address <<< "${printed}")" = "${MODULE_CHECKSUMMED}" ]
+  [ "$(jq -r .exit.location <<< "${printed}")" = "Berlin, DE" ]
+  run "${CLI}" status
+  printed="$(sed -n '2,$p' <<< "${output}")"
+  [ "$(jq -r .safe_address <<< "${printed}")" = "${SAFE_CHECKSUMMED}" ]
+  [ "$(jq -r .module_address "${GVPN_IDENTITY_DIR}/provisioning.json")" = "${MODULE}" ]
 }
 
 @test "finalize applies device shaping overrides" {

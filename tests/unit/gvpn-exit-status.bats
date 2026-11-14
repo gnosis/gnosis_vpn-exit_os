@@ -5,9 +5,14 @@
 
 load helpers
 
-NODE_ADDRESS="0x1234567890abcdef1234567890abcdef12345678"
-SAFE="0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-MODULE="0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+# Stored in lower case, as hopli and many tools write them; printed in their
+# EIP-55 checksum form (test vectors of EIP-55).
+NODE_ADDRESS="0x5aaeb6053f3e94c9b9a09f33669435e7ef1beaed"
+NODE_CHECKSUMMED="0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAed"
+SAFE="0xfb6916095ca1df60bb79ce92ce3ea74c37c5d359"
+SAFE_CHECKSUMMED="0xfB6916095ca1df60bB79Ce92cE3Ea74c37c5d359"
+MODULE="0xdbf03b407c01e7cd3cbea99509d93f8dddc8c6fb"
+MODULE_CHECKSUMMED="0xdbF03B407c01E7cD3CBea99509d93f8DDDC8C6FB"
 BLOKLI="https://blokli-test.example.org"
 HOPRD_PID=4242
 
@@ -199,7 +204,7 @@ cpu_policy() {
   run "${CLI}"
   [ "${status}" -eq 0 ]
   [[ "${output}" == *"identity created, not finalized"* ]]
-  [[ "${output}" == *"node address:"*"${NODE_ADDRESS}"* ]]
+  [[ "${output}" == *"node address:"*"${NODE_CHECKSUMMED}"* ]]
 }
 
 @test "provisioned: prints the provisioning record and the update channel" {
@@ -208,10 +213,10 @@ cpu_policy() {
   echo "${output}"
   [ "${status}" -eq 0 ]
   [[ "${output}" == *"state:"*"provisioned at 2026-09-24T00:00:00Z"* ]]
-  [[ "${output}" == *"node address:"*"${NODE_ADDRESS}"* ]]
+  [[ "${output}" == *"node address:"*"${NODE_CHECKSUMMED}"* ]]
   [[ "${output}" == *"peer id:"*"12D3KooWPeer"* ]]
-  [[ "${output}" == *"safe address:"*"${SAFE}"* ]]
-  [[ "${output}" == *"module address:"*"${MODULE}"* ]]
+  [[ "${output}" == *"safe address:"*"${SAFE_CHECKSUMMED}"* ]]
+  [[ "${output}" == *"module address:"*"${MODULE_CHECKSUMMED}"* ]]
   [[ "${output}" == *"serial:"*"SER8-0001"* ]]
   [[ "${output}" == *"location:"*"Zurich, CH"* ]]
   [[ "${output}" == *"image:"*"registry.example/gnosis-vpn-exit-os:canary"* ]]
@@ -399,12 +404,12 @@ esac'
 @test "netdata: probe and SSH tunnel link to the dashboard" {
   run "${CLI}"
   grep -q 'curl .*http://127.0.0.1:19999/api/v1/info' "${MOCK_LOG}"
-  [[ "${output}" == *"dashboard:"*"ssh -L 19999:127.0.0.1:19999 devops@192.168.1.50, then http://127.0.0.1:19999"* ]]
+  [[ "${output}" == *"dashboard:"*"ssh -L 19999:127.0.0.1:19999 gvpn@192.168.1.50, then http://127.0.0.1:19999"* ]]
 }
 
 @test "netdata tunnel uses the sudo user" {
-  SUDO_USER=operator run "${CLI}"
-  [[ "${output}" == *"ssh -L 19999:127.0.0.1:19999 operator@192.168.1.50"* ]]
+  SUDO_USER=alice run "${CLI}"
+  [[ "${output}" == *"ssh -L 19999:127.0.0.1:19999 alice@192.168.1.50"* ]]
 }
 
 @test "non-root: root-only checks show n/a" {

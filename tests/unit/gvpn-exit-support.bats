@@ -1,5 +1,5 @@
 #!/usr/bin/env bats
-# gvpn-exit-support: the devops CLI that opens, extends and closes the
+# gvpn-exit-support: the operator's CLI that opens, extends and closes the
 # time-boxed support tunnel window.
 
 load helpers

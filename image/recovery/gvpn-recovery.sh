@@ -292,8 +292,15 @@ identify_root() {
 
 # --- the appliance -----------------------------------------------------------
 
+# A device installed before the account was called `gvpn` keeps `devops`
+# until it boots an image that renames it, and its sshd admits devops until
+# then. A renamed device keeps the old path as a link to the gvpn home.
 home_dir() {
-  printf '%s/home/devops\n' "${VAR}"
+  if [[ ! -d "${VAR}/home/gvpn" && -d "${VAR}/home/devops" ]]; then
+    printf '%s/home/devops\n' "${VAR}"
+  else
+    printf '%s/home/gvpn\n' "${VAR}"
+  fi
 }
 
 key_file() {
@@ -313,8 +320,8 @@ check_modes() {
   done
 }
 
-# devops's uid and gid, as the installer created the home directory.
-devops_owner() {
+# gvpn's uid and gid, as the installer created the home directory.
+gvpn_owner() {
   stat -c %u:%g "$(home_dir)"
 }
 
@@ -325,7 +332,7 @@ ensure_key_file() {
   local dir owner
   dir="$(home_dir)/.ssh"
   [[ -f "$(key_file)" ]] && return 0
-  owner="$(devops_owner)"
+  owner="$(gvpn_owner)"
   { mkdir -p "${dir}" &&
     : >"$(key_file)" &&
     chown "${owner}" "${dir}" "$(key_file)" &&
@@ -367,7 +374,7 @@ expiry_live() {
 # a stick that was tampered with.
 #
 # The file is rewritten in place, never replaced, so its SELinux label stays as
-# the installer left it; owner and mode are set from the devops home.
+# the installer left it; owner and mode are set from the gvpn home.
 inject_keys() {
   local key_type key_blob expiry marker line tmp
   local -A wanted=() present=()
@@ -413,7 +420,7 @@ inject_keys() {
   done <<<"${PAYLOAD_LINES}"
 
   { cat "${tmp}" >"$(key_file)" &&
-    chown "$(devops_owner)" "$(key_file)" &&
+    chown "$(gvpn_owner)" "$(key_file)" &&
     chmod 0600 "$(key_file)"; } ||
     abort "The device's SSH key file could not be written."
   rm -f "${tmp}"

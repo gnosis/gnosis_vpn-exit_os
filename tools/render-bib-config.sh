@@ -5,11 +5,11 @@
 #
 #   tools/render-bib-config.sh iso|qcow2 SSH_PUBKEY_FILE
 #
-# SSH_PUBKEY_FILE becomes the devops user's authorized key, which is how the
-# device is reached from its LAN. With GVPN_CONSOLE_ACCESS=1 the file is not
-# read and the ISO installs a devops user with an expired console password and
-# no SSH key: first access is the console, a VM console or a hardware
-# keyboard and monitor, where the operator adds their own key.
+# SSH_PUBKEY_FILE becomes the authorized key of the `gvpn` account, which
+# is how the device is reached from its LAN. With GVPN_CONSOLE_ACCESS=1 the
+# file is not read and the ISO installs `gvpn` with an expired console
+# password and no SSH key: first access is the console, a VM console or a
+# hardware keyboard and monitor, where the operator adds their own key.
 #   GVPN_INSTALL_DISK         the disk the installer ISO's kickstart wipes (auto)
 #                             auto: the installer picks the only internal disk
 #                             (image/bib/select-install-disk.sh) and refuses to
@@ -34,10 +34,10 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 TEMPLATE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../image/bib" && pwd)"
 # user@host, or ssh://user@host:port (ssh reads a bare host:port as a hostname).
 BASTION_RE='^([a-z_][a-z0-9_-]*@[A-Za-z0-9.-]+|ssh://[a-z_][a-z0-9_-]*@[A-Za-z0-9.-]+(:[0-9]+)?)$'
-# Password of the console-configured devops user; the kickstart expires it, so
-# the first console login must change it. SSH stays key-only.
+# Password of the console-configured `gvpn` account; the kickstart expires
+# it, so the first console login must change it. SSH stays key-only.
 # shellcheck disable=SC2016 # the $... crypt hash is literal
-CONSOLE_PASSWORD_HASH='$6$gvpn-exit$j7xn4gZetDeh6pNrgXd18GpRvr7xK2BLHpuv51nmGRgtL1K4dUBEV15ePl7UPapwA1WYpTApHXlgCPGWVQOJK0'
+CONSOLE_PASSWORD_HASH='$6$gvpn-exit$na/6RcrrLQ.XhhrnNzcDh01Ho5I.V3r4Zb5tWrtw7NbqppczFUjlb/Vy1iGU.uBIuZDiUnI2YPVq9A63nQ/aW0'
 
 die() {
   echo "$*" >&2
@@ -96,9 +96,9 @@ main() {
 
   if (( console )); then
     substitutions+=(
-      -e "s|@DEVOPS_USER@|user --name=devops --groups=wheel --iscrypted --password \"${CONSOLE_PASSWORD_HASH}\"|"
-      -e "s|@DEVOPS_SSHKEY@|# no SSH key: log in on the console to install your own|"
-      -e "s|@DEVOPS_SSH_KEY@||"
+      -e "s|@OPERATOR_USER@|user --name=gvpn --groups=wheel --iscrypted --password \"${CONSOLE_PASSWORD_HASH}\"|"
+      -e "s|@OPERATOR_SSHKEY@|# no SSH key: log in on the console to install your own|"
+      -e "s|@OPERATOR_SSH_KEY@||"
       -e '/^@CONSOLE_\(BEGIN\|END\)@$/d'
     )
   else
@@ -111,9 +111,9 @@ main() {
         && "${key_data}" =~ ^[A-Za-z0-9+/]+={0,2}$ ]] \
       || die "${pubkey_file} is not an SSH public key"
     substitutions+=(
-      -e "s|@DEVOPS_USER@|user --name=devops --groups=wheel --lock|"
-      -e "s|@DEVOPS_SSHKEY@|sshkey --username=devops \"${key_type} ${key_data}\"|"
-      -e "s|@DEVOPS_SSH_KEY@|${key_type} ${key_data}|"
+      -e "s|@OPERATOR_USER@|user --name=gvpn --groups=wheel --lock|"
+      -e "s|@OPERATOR_SSHKEY@|sshkey --username=gvpn \"${key_type} ${key_data}\"|"
+      -e "s|@OPERATOR_SSH_KEY@|${key_type} ${key_data}|"
       -e '/^@CONSOLE_BEGIN@$/,/^@CONSOLE_END@$/d'
     )
   fi

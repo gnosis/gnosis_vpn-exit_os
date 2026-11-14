@@ -13,9 +13,12 @@ fi
 UNITS_TIMEOUT_S="${GVPN_UNITS_TIMEOUT_S:-180}"
 HOPRD_STABLE_S="${GVPN_HOPRD_STABLE_S:-60}"
 
+# gvpn-exit-account-migrate renames the devops account of an earlier install;
+# without it nobody can log in, and a rollback returns to the deployment that
+# still admits devops.
 wait_units_active "${UNITS_TIMEOUT_S}" gvpn-exit-firewall.service gvpn-exit-data-guard.service \
   gvpn-blocklist-boot.service gnosisvpn-server.service \
-  node_exporter.service netdata.service sshd.service
+  node_exporter.service netdata.service sshd.service gvpn-exit-account-migrate.service
 
 restarts="$(systemctl show -p NRestarts --value gnosisvpn-server.service)"
 if [[ "${restarts}" != "0" ]]; then

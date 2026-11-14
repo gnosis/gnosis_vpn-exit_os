@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # enroll-tunnel.service and support-tunnel.service: reverse SSH tunnel to the
 # support bastion. Port SUPPORT_PORT on the bastion's loopback forwards to
-# this device's sshd, so operators reach devops without any inbound port on
-# the device's LAN. The units differ only in the key: the enrollment key
-# from the installer while unprovisioned, the TPM-sealed support key inside a
-# support window afterwards.
+# this device's sshd, so operators reach the `gvpn` account without any
+# inbound port on the device's LAN. The units differ only in the key: the
+# enrollment key from the installer while unprovisioned, the TPM-sealed support
+# key inside a support window afterwards.
 #
 #   support-tunnel.sh KEY_FILE
 #

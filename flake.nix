@@ -137,7 +137,10 @@
               ++ lib.optionals stdenv.isLinux [
                 pkgs.iproute2
                 pkgs.swtpm
+                # tools/brand-iso.sh rewrites the installer ISO's boot menu
+                # and re-embeds the checksum its media check verifies.
                 pkgs.xorriso
+                pkgs.isomd5sum
               ]
               ++ lib.optionals (stdenv.isLinux && stdenv.isx86_64) [
                 pkgs.qemu_kvm

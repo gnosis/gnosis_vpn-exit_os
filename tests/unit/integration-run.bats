@@ -27,7 +27,7 @@ esac'
 while (( $# )); do
   arg="$1"
   shift
-  [[ "${arg}" == devops@* ]] && break
+  [[ "${arg}" == gvpn@* ]] && break
 done
 cmd="$*"
 cmd="${cmd#sudo }"
@@ -83,7 +83,7 @@ while (( $# )); do
   arg="$1"
   shift
   [[ "${arg}" == -p ]] && port="$1"
-  [[ "${arg}" == devops@* ]] && break
+  [[ "${arg}" == gvpn@* ]] && break
 done
 case "$*" in
   true) exit 0 ;;
@@ -92,7 +92,7 @@ case "$*" in
 esac'
   export VM_BASTION_WAIT=0
   MOCK_TUNNEL_ID=another-device run bash "${RUN}" enroll
-  [[ "${output}" == *"FAIL devops reachable through the bastion"* ]]
+  [[ "${output}" == *"FAIL gvpn reachable through the bastion"* ]]
   MOCK_TUNNEL_ID=device-under-test run bash "${RUN}" enroll
-  [[ "${output}" == *"PASS devops reachable through the bastion"* ]]
+  [[ "${output}" == *"PASS gvpn reachable through the bastion"* ]]
 }

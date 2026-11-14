@@ -396,3 +396,28 @@ capacity_values_strict() {
     [ "${status}" -ne 0 ] || { echo "accepted ${range}"; false; }
   done
 }
+
+# The test vectors of EIP-55 itself: the checksum form follows from the
+# address, whatever case it is given in.
+@test "checksum_address prints an address in its EIP-55 checksum form" {
+  local expected
+  for expected in 0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAed 0xfB6916095ca1df60bB79Ce92cE3Ea74c37c5d359 \
+    0xdbF03B407c01E7cD3CBea99509d93f8DDDC8C6FB 0xD1220A0cf47c7B9Be7A2E6BA89F429762e7b9aDb; do
+    run in_script "${LIB}" checksum_address "${expected,,}"
+    [ "${output}" = "${expected}" ] || { echo "${expected,,} printed as ${output}"; false; }
+    run in_script "${LIB}" checksum_address "0x$(tr a-f A-F <<< "${expected:2}")"
+    [ "${output}" = "${expected}" ] || { echo "upper case printed as ${output}"; false; }
+  done
+}
+
+@test "checksum_address prints anything but an address as it is" {
+  run in_script "${LIB}" checksum_address 0x123
+  [ "${status}" -eq 0 ]
+  [ "${output}" = 0x123 ]
+  run in_script "${LIB}" checksum_address "not configured"
+  [ "${output}" = "not configured" ]
+  # Without a working cast the address is still printed, as it was stored.
+  GVPN_CAST_BIN=false run in_script "${LIB}" checksum_address 0x5aaeb6053f3e94c9b9a09f33669435e7ef1beaed
+  [ "${status}" -eq 0 ]
+  [ "${output}" = 0x5aaeb6053f3e94c9b9a09f33669435e7ef1beaed ]
+}

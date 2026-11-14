@@ -4,7 +4,7 @@
 # as the bridge's host address. Device keys get the same restriction as on the
 # real bastion, so a device can only open its own reverse port. The reverse
 # port lands on the host's loopback, which makes the device reachable as
-# `ssh -p SUPPORT_PORT devops@127.0.0.1`. Keys, config and logs live in
+# `ssh -p SUPPORT_PORT gvpn@127.0.0.1`. Keys, config and logs live in
 # output/bastion.
 #
 #   tests/integration/bastion.sh start         create keys on first use, start sshd

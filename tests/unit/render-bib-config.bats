@@ -1,8 +1,8 @@
 #!/usr/bin/env bats
 # tools/render-bib-config.sh renders the bootc-image-builder config on the
-# host. The installer ISO carries the devops key and, when the operator gives
-# the bastion inputs, everything the enrollment tunnel needs for first access;
-# the QEMU qcow2 only the key.
+# host. The installer ISO carries the key of the `gvpn` account and, when
+# the operator gives the bastion inputs, everything the enrollment tunnel needs
+# for first access; the QEMU qcow2 only the key.
 
 load helpers
 
@@ -11,8 +11,8 @@ RENDER="${REPO_ROOT}/tools/render-bib-config.sh"
 setup() {
   setup_sandbox
   unset GVPN_CONSOLE_ACCESS
-  PUBKEY="${SANDBOX}/devops.pub"
-  echo "ssh-ed25519 AAAAC3NzaDevops ops@example" > "${PUBKEY}"
+  PUBKEY="${SANDBOX}/operator.pub"
+  echo "ssh-ed25519 AAAAC3NzaOperator ops@example" > "${PUBKEY}"
   export GVPN_BASTION="support@bastion.example"
   export GVPN_SUPPORT_PORT=22001
   export GVPN_ENROLL_KEY="${SANDBOX}/enroll"
@@ -43,9 +43,9 @@ post_file() {
   grep -q "^(umask 077; echo '.*' | base64 -d > /etc/gvpn-exit/enroll.key)$" <<< "${output}"
 }
 
-@test "iso: the devops key goes to the kickstart and no placeholder is left" {
+@test "iso: the operator key goes to the kickstart and no placeholder is left" {
   run "${RENDER}" iso "${PUBKEY}"
-  grep -qx 'sshkey --username=devops "ssh-ed25519 AAAAC3NzaDevops"' <<< "${output}"
+  grep -qx 'sshkey --username=gvpn "ssh-ed25519 AAAAC3NzaOperator"' <<< "${output}"
   run grep '@[A-Z_]*@' <<< "${output}"
   [ "${status}" -eq 1 ]
 }
@@ -91,11 +91,20 @@ post_file() {
   [ "$(grep -c '^%end$' <<< "${output}")" -eq 1 ]
   [[ "${output}" != *"enroll.key"* ]]
   [[ "${output}" != *"support.env"* ]]
-  # LAN access is all this device has: the devops key and the locked passwords
+  # LAN access is all this device has: the operator key and the locked passwords
   # stay, and the kickstart is still closed properly.
-  grep -qx 'sshkey --username=devops "ssh-ed25519 AAAAC3NzaDevops"' <<< "${output}"
+  grep -qx 'sshkey --username=gvpn "ssh-ed25519 AAAAC3NzaOperator"' <<< "${output}"
   grep -qx 'rootpw --lock' <<< "${output}"
-  grep -qx 'reboot --eject' <<< "${output}"
+  # A static hostname, unlike the kernel command line's default, is the one
+  # NetworkManager sends in its DHCP requests, so the router lists the device
+  # by name and the operator finds its address there.
+  grep -qx 'network --hostname=gvpn-exit' <<< "${output}"
+  # The installer powers the device off rather than rebooting into the
+  # installer media again, so the operator can unplug the USB stick first.
+  grep -qx 'poweroff --eject' <<< "${output}"
+  run grep -E '^(reboot|halt|shutdown)\b' <<< "${output}"
+  [ "${status}" -eq 1 ]
+  run "${RENDER}" iso "${PUBKEY}"
   [ "$(tail -1 <<< "${output}")" = '"""' ]
   run grep '@[A-Z_]*@' <<< "${output}"
   [ "${status}" -eq 1 ]
@@ -215,10 +224,10 @@ post_file() {
   run "${RENDER}" iso "${PUBKEY}"
   [ "${status}" -eq 0 ]
   rendered="${output}"
-  grep -qx 'user --name=devops --groups=wheel --iscrypted --password "$6$gvpn-exit$j7xn4gZetDeh6pNrgXd18GpRvr7xK2BLHpuv51nmGRgtL1K4dUBEV15ePl7UPapwA1WYpTApHXlgCPGWVQOJK0"' <<< "${rendered}"
-  run grep -q 'sshkey --username=devops' <<< "${rendered}"
+  grep -qx 'user --name=gvpn --groups=wheel --iscrypted --password "$6$gvpn-exit$na/6RcrrLQ.XhhrnNzcDh01Ho5I.V3r4Zb5tWrtw7NbqppczFUjlb/Vy1iGU.uBIuZDiUnI2YPVq9A63nQ/aW0"' <<< "${rendered}"
+  run grep -q 'sshkey --username=gvpn' <<< "${rendered}"
   [ "${status}" -eq 1 ]
-  grep -q 'chage -d 0 devops' <<< "${rendered}"
+  grep -q 'chage -d 0 gvpn' <<< "${rendered}"
   grep -q 'systemctl enable serial-getty@ttyS0.service' <<< "${rendered}"
   run grep '@[A-Z_]*@' <<< "${rendered}"
   [ "${status}" -eq 1 ]
@@ -237,17 +246,17 @@ post_file() {
 
 @test "iso: the console password hash matches the documented password" {
   command -v openssl >/dev/null || skip "openssl is not on PATH"
-  run openssl passwd -6 -salt gvpn-exit gvpn-exit
+  run openssl passwd -6 -salt gvpn-exit exit4gvpn
   [ "${status}" -eq 0 ]
-  [[ "${output}" == '$6$gvpn-exit$j7xn4gZetDeh6pNrgXd18GpRvr7xK2BLHpuv51nmGRgtL1K4dUBEV15ePl7UPapwA1WYpTApHXlgCPGWVQOJK0' ]]
+  [[ "${output}" == '$6$gvpn-exit$na/6RcrrLQ.XhhrnNzcDh01Ho5I.V3r4Zb5tWrtw7NbqppczFUjlb/Vy1iGU.uBIuZDiUnI2YPVq9A63nQ/aW0' ]]
 }
 
 @test "iso: key access has no console password or serial getty block" {
   run "${RENDER}" iso "${PUBKEY}"
   [ "${status}" -eq 0 ]
   rendered="${output}"
-  grep -qx 'user --name=devops --groups=wheel --lock' <<< "${rendered}"
-  run grep -q 'chage -d 0 devops' <<< "${rendered}"
+  grep -qx 'user --name=gvpn --groups=wheel --lock' <<< "${rendered}"
+  run grep -q 'chage -d 0 gvpn' <<< "${rendered}"
   [ "${status}" -eq 1 ]
   run grep -q 'serial-getty@ttyS0' <<< "${rendered}"
   [ "${status}" -eq 1 ]
@@ -257,11 +266,12 @@ post_file() {
   unset GVPN_BASTION GVPN_SUPPORT_PORT GVPN_ENROLL_KEY GVPN_BASTION_KNOWN_HOSTS
   run "${RENDER}" qcow2 "${PUBKEY}"
   [ "${status}" -eq 0 ]
-  grep -qx 'key = "ssh-ed25519 AAAAC3NzaDevops"' <<< "${output}"
+  grep -qx 'name = "gvpn"' <<< "${output}"
+  grep -qx 'key = "ssh-ed25519 AAAAC3NzaOperator"' <<< "${output}"
   [[ "${output}" != *"%post"* ]]
 }
 
-@test "refuses a devops key that is not an SSH public key" {
+@test "refuses an operator key that is not an SSH public key" {
   echo "not a key" > "${PUBKEY}"
   run "${RENDER}" qcow2 "${PUBKEY}"
   [ "${status}" -ne 0 ]
@@ -273,30 +283,30 @@ post_file() {
 }
 
 @test "the key comment is dropped, so no quote or sed metacharacter reaches the config" {
-  echo 'ssh-ed25519 AAAAC3NzaDevops ops "workstation" a&b\c' > "${PUBKEY}"
+  echo 'ssh-ed25519 AAAAC3NzaOperator ops "workstation" a&b\c' > "${PUBKEY}"
   run "${RENDER}" qcow2 "${PUBKEY}"
   [ "${status}" -eq 0 ]
-  grep -qx 'key = "ssh-ed25519 AAAAC3NzaDevops"' <<< "${output}"
+  grep -qx 'key = "ssh-ed25519 AAAAC3NzaOperator"' <<< "${output}"
   run "${RENDER}" iso "${PUBKEY}"
   [ "${status}" -eq 0 ]
-  grep -qx 'sshkey --username=devops "ssh-ed25519 AAAAC3NzaDevops"' <<< "${output}"
+  grep -qx 'sshkey --username=gvpn "ssh-ed25519 AAAAC3NzaOperator"' <<< "${output}"
 }
 
 @test "a key comment cannot inject sed commands" {
-  echo "ssh-ed25519 AAAAC3NzaDevops x|;w ${SANDBOX}/injected" > "${PUBKEY}"
+  echo "ssh-ed25519 AAAAC3NzaOperator x|;w ${SANDBOX}/injected" > "${PUBKEY}"
   run "${RENDER}" qcow2 "${PUBKEY}"
   [ "${status}" -eq 0 ]
   [ -z "$(ls "${SANDBOX}" | grep injected)" ]
 }
 
 @test "accepts the security-key types the recovery stick accepts" {
-  echo 'sk-ssh-ed25519@openssh.com AAAAC3NzaDevops ops@yubikey' > "${PUBKEY}"
+  echo 'sk-ssh-ed25519@openssh.com AAAAC3NzaOperator ops@yubikey' > "${PUBKEY}"
   run "${RENDER}" qcow2 "${PUBKEY}"
   [ "${status}" -eq 0 ]
-  grep -qx 'key = "sk-ssh-ed25519@openssh.com AAAAC3NzaDevops"' <<< "${output}"
+  grep -qx 'key = "sk-ssh-ed25519@openssh.com AAAAC3NzaOperator"' <<< "${output}"
 }
 
-@test "refuses a devops key whose key data is not base64" {
+@test "refuses an operator key whose key data is not base64" {
   echo 'ssh-ed25519 AAAA"C3Nza ops@example' > "${PUBKEY}"
   run "${RENDER}" qcow2 "${PUBKEY}"
   [ "${status}" -ne 0 ]

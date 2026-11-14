@@ -89,7 +89,7 @@ teardown() {
   grep -qx 'incus stop gvpn-exit --timeout=60' "${MOCK_LOG}"
   grep -qx 'incus config device remove gvpn-exit install' "${MOCK_LOG}"
   grep -qx 'incus start gvpn-exit' "${MOCK_LOG}"
-  [[ "${output}" == *"devops@10.20.30.40"* ]]
+  [[ "${output}" == *"gvpn@10.20.30.40"* ]]
 }
 
 @test "ip picks the exact instance name, not a longer prefix" {
@@ -178,26 +178,29 @@ teardown() {
   [[ "${output}" == *"no IPv4 address"* ]]
 }
 
-@test "ssh connects as devops to the resolved address and forwards arguments" {
+@test "ssh connects as gvpn to the resolved address and forwards arguments" {
   touch "${SANDBOX}/instance"
   run "${INCUS}" ssh sudo gvpn-exit-status
   [ "${status}" -eq 0 ]
-  grep -qx 'ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null devops@10.20.30.40 sudo gvpn-exit-status' "${MOCK_LOG}"
+  grep -qx 'ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null gvpn@10.20.30.40 sudo gvpn-exit-status' "${MOCK_LOG}"
 }
 
 @test "ssh uses VM_SSH_KEY when it is set" {
   touch "${SANDBOX}/instance"
-  export VM_SSH_KEY="/secure/devops-key"
+  export VM_SSH_KEY="/secure/operator-key"
   run "${INCUS}" ssh true
   [ "${status}" -eq 0 ]
-  grep -qx 'ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -i /secure/devops-key devops@10.20.30.40 true' "${MOCK_LOG}"
+  grep -qx 'ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -i /secure/operator-key gvpn@10.20.30.40 true' "${MOCK_LOG}"
 }
 
-@test "console attaches to the instance" {
+@test "console attaches to the instance and says how to get the login prompt" {
+  # The serial getty printed its prompt before anyone attached; it shows
+  # again only after a key press.
   touch "${SANDBOX}/instance"
   run "${INCUS}" console
   [ "${status}" -eq 0 ]
   grep -qx 'incus console gvpn-exit' "${MOCK_LOG}"
+  [[ "${output}" == *"press Enter for the login prompt"* ]]
 }
 
 @test "destroy deletes the instance and its vTPM" {

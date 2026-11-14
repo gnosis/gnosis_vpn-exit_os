@@ -23,7 +23,7 @@ host's Incus installation, which is Linux-only and not part of the devshell
 | [`justfile`](../justfile)                                                                    | Commands, image tag, default channel and SSH key path                                                                              |
 | [`flake.nix`](../flake.nix), [`flake.lock`](../flake.lock)                                   | Devshell tools                                                                                                                     |
 | [`image/versions.env`](../image/versions.env)                                                | Base image digest, application versions and hashes, netdata version; bump by reviewed PR                                           |
-| [`image/Containerfile`](../image/Containerfile), [`image/build/`](../image/build/)           | Release download and verification, packages, blocklist snapshot, deployment configuration, smoke tests, `bootc container lint`     |
+| [`image/Containerfile`](../image/Containerfile), [`image/build/`](../image/build/)           | Release download and verification, packages, blocklist snapshot, deployment config, OS name, smoke tests, `bootc container lint`   |
 | [`image/rootfs/`](../image/rootfs/)                                                          | Files copied into the OS                                                                                                           |
 | [`keys/`](../keys/)                                                                          | Public keys only: release signing keys and the netdata repo key. The image-update key is an operator input, not a repository file. |
 | [`image/bib/`](../image/bib/), [`tools/render-bib-config.sh`](../tools/render-bib-config.sh) | Installer and qcow2 templates, per-device input validation                                                                         |
@@ -48,7 +48,7 @@ never put a private key under `keys/`.
 | `qcow2`                       | `build`, then a disk under `output/qcow2/` (not used by `tools/vm.sh`)                                                                                                                                                            |
 | `vm-install`                  | Installs the ISO into a fresh VM; deletes `output/vm/`                                                                                                                                                                            |
 | `vm-run`                      | Boots the installed VM on the terminal; `Ctrl-a x` quits                                                                                                                                                                          |
-| `vm-ssh [command]`            | SSH as devops to localhost port 2222                                                                                                                                                                                              |
+| `vm-ssh [command]`            | SSH as gvpn to localhost port 2222                                                                                                                                                                                                |
 | `publish-iso [VERSION]`       | Signs and pushes the installer ISO as `<version>-<channel>`, then moves that channel in the ISO repository; the channel is the one the ISO was built for, and the image channel has to serve the image the ISO embeds             |
 | `push-iso [VERSION]`          | Signs and pushes the installer ISO as `<version>-<channel>` without moving a channel tag, once the image version is published (idempotent for one build; refuses a version published from another build)                          |
 | `tag-iso VERSION CHANNEL`     | Verifies the already published `<version>-<channel>` against `GVPN_COSIGN_PUB` and that the image channel serves its image, then moves that channel in the ISO repository to it                                                   |
@@ -56,7 +56,7 @@ never put a private key under `keys/`.
 | `incus-install [ISO]`         | Builds an ISO with `iso` and boots the installer in a new Incus VM; with `ISO`, installs that file                                                                                                                                |
 | `incus-install-published REF` | Pulls a published ISO and installs it in a new Incus VM                                                                                                                                                                           |
 | `incus-run`                   | Removes the installer disk and boots the installed Incus VM                                                                                                                                                                       |
-| `incus-ssh [command]`         | SSH as devops to the Incus VM's bridge address                                                                                                                                                                                    |
+| `incus-ssh [command]`         | SSH as gvpn to the Incus VM's bridge address                                                                                                                                                                                      |
 | `incus-console`               | Attaches to the Incus VM console; `Ctrl-a q` leaves it                                                                                                                                                                            |
 | `incus-destroy`               | Deletes the Incus VM, its disk and its vTPM                                                                                                                                                                                       |
 | `test-integration PHASE`      | Checks the running VM over SSH ([phases](#tests))                                                                                                                                                                                 |
@@ -145,7 +145,7 @@ The installer ISO also reads:
 | Variable              | Value                                                                                                                                                                                                                                                                                                                                                                                                                  |
 | --------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `GVPN_INSTALL_DISK`   | The disk the kickstart wipes. Default `auto`, also when set but empty: the installer picks the only internal disk, ignoring USB and other removable disks and its own install media, and stops with an error when there is not exactly one. A kernel name (`nvme0n1`, `sda`, `vda`) pins the disk, which a device with more than one internal disk needs. It is an installer input; the container image never sees it. |
-| `GVPN_CONSOLE_ACCESS` | `1` builds an ISO with no installer SSH key and an expired `devops` console password; `just iso-console` sets it. `just iso` stays key-configured.                                                                                                                                                                                                                                                                     |
+| `GVPN_CONSOLE_ACCESS` | `1` builds an ISO with no installer SSH key and an expired `gvpn` console password; `just iso-console` sets it. `just iso` stays key-configured.                                                                                                                                                                                                                                                                       |
 | `GVPN_ISO`            | The ISO path that `publish-iso`, `push-iso` and `usb` use instead of `output/iso/bootiso/install.iso`                                                                                                                                                                                                                                                                                                                  |
 | `GVPN_ISO_DIR`        | Where `pull-iso` downloads to, default `output/published-iso`                                                                                                                                                                                                                                                                                                                                                          |
 | `GVPN_ISO_VERIFY_DIR` | Where `publish-iso` and `tag-iso` download the published ISO they verify, removed afterwards; default `output`                                                                                                                                                                                                                                                                                                         |
@@ -284,12 +284,13 @@ fork.
 `tools/render-bib-config.sh` runs on the host, so key files may live outside the
 repository. It writes the bootc-image-builder config to a 0600 temporary file
 under `output/` that is deleted when the recipe ends. A key-configured ISO takes
-the devops public key from `GVPN_DEVOPS_SSH_KEY` (default `ssh_id.pub`; only the
-first key line is used) and accepts the key types the recovery stick accepts,
-security keys included. With `GVPN_CONSOLE_ACCESS=1` the key file is not read:
-`devops` gets the temporary password `gvpn-exit`, the kickstart expires it, and
-no SSH key is installed. The serial getty is enabled only when the installed
-system runs in a VM; on hardware the console is the keyboard and monitor (tty1).
+the operator public key from `GVPN_OPERATOR_SSH_KEY` (default `ssh_id.pub`; only
+the first key line is used) and accepts the key types the recovery stick
+accepts, security keys included. With `GVPN_CONSOLE_ACCESS=1` the key file is
+not read: `gvpn` gets the temporary password `exit4gvpn`, the kickstart expires
+it, and no SSH key is installed. The serial getty is enabled only when the
+installed system runs in a VM; on hardware the console is the keyboard and
+monitor (tty1).
 
 For a managed device, administered through a support bastion
 ([the setups](first-install.md#choose-your-setup)), the ISO also carries the
@@ -315,14 +316,27 @@ build ends and leaves such an ISO readable by its owner only (0600). Copying it
 elsewhere does not keep that protection. **Booting the ISO wipes its install
 disk (the one `GVPN_INSTALL_DISK` names, or the only internal disk the installer
 finds) without asking.** The kickstart installs the
-[pinned layout](architecture.md#persistent-state), creates devops with the key
-and locks devops' password (a console-configured ISO instead sets a temporary
-expired devops password and no key), locks root's password, sets UTC and
-reboots; with the bastion inputs it also writes `/etc/gvpn-exit/support.env` and
-`bastion_known_hosts` (0644) and `enroll.key` (0600). For an install follow
+[pinned layout](architecture.md#persistent-state), creates `gvpn` with the key
+and locks its password (a console-configured ISO instead sets a temporary
+expired `gvpn` password and no key), locks root's password, sets UTC and the
+hostname `gvpn-exit`, and powers off, so the USB stick comes out before the
+first boot; with the bastion inputs it also writes `/etc/gvpn-exit/support.env`
+and `bastion_known_hosts` (0644) and `enroll.key` (0600). For an install follow
 [first-install.md](first-install.md).
 
-The qcow2 template only creates devops and requests a root filesystem of at
+bootc-image-builder titles the installer's menu entries with the image's
+os-release `NAME` and `VERSION_ID` ("Install GnosisVPN ExitOS 44") and has no
+setting for it. After the build, `tools/brand-iso.sh` removes the release from
+the three copies of the menu (`/EFI/BOOT/grub.cfg`, `/boot/grub2/grub.cfg` for
+BIOS, and the appended EFI system partition that UEFI firmware boots). It writes
+the ISO again with xorriso, which replays the ISO's own boot setup. It also
+embeds the checksum that the "Test this media" entry verifies again, and updates
+the sha256 in `install.iso.target`. It runs on the host with xorriso, mtools and
+isomd5sum from the Linux devshell, and needs free space for a second copy of the
+ISO while it works. It stops the build when a menu has no
+`Install GnosisVPN ExitOS` entry.
+
+The qcow2 template only creates `gvpn` and requests a root filesystem of at
 least 20 GiB.
 
 Every ISO build (`tools/build-disk.sh`) writes `install.iso.version` and
@@ -335,8 +349,8 @@ also records the channel the installed device follows (`channel=`), the embedded
 image's ID (`image=`) and the ISO's checksum (`sha256=`). Publishing and pulling
 require `disk=auto`, `enrollment=none`, `access=console` and a channel of
 `canary` or `stable`, so a publisher cannot push an installer pinned to one
-disk, an ISO with a private enrollment key or an ISO with a shared `devops` key
-by mistake. `tools/publish-iso.sh` refuses an ISO without a version sidecar or
+disk, an ISO with a private enrollment key or an ISO with a shared `gvpn` key by
+mistake. `tools/publish-iso.sh` refuses an ISO without a version sidecar or
 whose target sidecar does not hold the ISO's own `sha256`. It writes
 `install.iso.sha256`, the checksums of the ISO and both sidecars, signs that
 file, and pushes the ISO, the checksum file, its signature bundle
@@ -379,8 +393,8 @@ networking forwards localhost port 2222 (`VM_SSH_PORT`) to SSH. State lives in
 picks the VM's root disk at install time like the internal disk of hardware,
 then creates the instance, adds a vTPM and boots the installer. `just incus-run`
 removes the installer disk and boots the installed system; `just incus-ssh`
-connects as `devops`. The production default is **8 vCPUs, 16 GiB RAM and a 64
-GiB disk** (minimum recommended), overridable with `GVPN_INCUS_CPUS`,
+connects as `gvpn`. The production default is **8 vCPUs, 16 GiB RAM and a 64 GiB
+disk** (minimum recommended), overridable with `GVPN_INCUS_CPUS`,
 `GVPN_INCUS_MEMORY` and `GVPN_INCUS_DISK_SIZE`; `GVPN_INCUS_VM` names the
 instance (default `gvpn-exit`).
 
@@ -404,16 +418,16 @@ built with `just iso` and the four bastion inputs ([publishing](#ci)).
 
 The rehearsal installs a device with a bastion: a throwaway one on the host
 (`tests/integration/bastion.sh`), which the VM reaches as `10.0.2.2`.
-`VM_SSH_KEY` is the private key matching `GVPN_DEVOPS_SSH_KEY`. The harness uses
-it; `just vm-ssh` does not, so pass `-i` there if your agent does not offer the
-key. Keep port 2222, which `vm-ssh` hardcodes.
+`VM_SSH_KEY` is the private key matching `GVPN_OPERATOR_SSH_KEY`. The harness
+uses it; `just vm-ssh` does not, so pass `-i` there if your agent does not offer
+the key. Keep port 2222, which `vm-ssh` hardcodes.
 
 Terminal 1:
 
 ```sh
 export GVPN_IMAGE_REPO='registry.example.org/fleet/gvpn-exit-os'
 export GVPN_COSIGN_PUB='/secure/path/cosign.pub'
-export GVPN_DEVOPS_SSH_KEY="$HOME/.ssh/id_ed25519.pub"
+export GVPN_OPERATOR_SSH_KEY="$HOME/.ssh/id_ed25519.pub"
 nix develop -c just test
 nix develop -c tests/integration/bastion.sh start
 eval "$(nix develop -c tests/integration/bastion.sh env)"

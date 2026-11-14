@@ -8,6 +8,10 @@ text --non-interactive
 lang en_US.UTF-8
 keyboard us
 timezone Etc/UTC --utc
+# A static hostname, which NetworkManager sends with its DHCP requests: the
+# router lists the device by name. The kernel command line's default
+# (/usr/lib/bootc/kargs.d) only names it locally.
+network --hostname=gvpn-exit
 zerombr
 @DISK_PINNED_BEGIN@
 ignoredisk --only-use=@INSTALL_DISK@
@@ -23,9 +27,11 @@ part /boot/efi --fstype=efi --size=600
 part /boot --fstype=xfs --size=2048
 part / --fstype=xfs --grow
 rootpw --lock
-@DEVOPS_USER@
-@DEVOPS_SSHKEY@
-reboot --eject
+@OPERATOR_USER@
+@OPERATOR_SSHKEY@
+# Power off rather than reboot: the operator unplugs the USB stick before the
+# first boot, which would otherwise start the installer again.
+poweroff --eject
 @DISK_AUTO_BEGIN@
 
 # The install disk is picked on the device: the only internal disk, never the
@@ -43,7 +49,7 @@ reboot --eject
 # the serial port, while hardware is logged into on tty1, and a getty on a
 # serial port that is not there only restarts in a loop: enable it in a VM.
 %post --erroronfail
-chage -d 0 devops
+chage -d 0 gvpn
 if systemd-detect-virt --quiet --vm; then
   systemctl enable serial-getty@ttyS0.service
 fi

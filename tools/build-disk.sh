@@ -87,7 +87,7 @@ if [[ "${kind}" == iso ]]; then
     enrollment=bastion
   fi
   access=console
-  if grep -q '^sshkey --username=devops ' "${config}"; then
+  if grep -q '^sshkey --username=gvpn ' "${config}"; then
     access=key
   fi
   while IFS= read -r iso; do
