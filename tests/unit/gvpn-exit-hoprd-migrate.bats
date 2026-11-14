@@ -10,6 +10,7 @@ OLD_SAFE="0x1111111111111111111111111111111111111111"
 OLD_MODULE="0x2222222222222222222222222222222222222222"
 NEW_SAFE="0x3333333333333333333333333333333333333333"
 NEW_MODULE="0x4444444444444444444444444444444444444444"
+NODE="0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 BLOKLI="https://blokli.example.org"
 
 setup() {
@@ -54,10 +55,14 @@ setup() {
     "${OLD_SAFE}" "${OLD_MODULE}" "${BLOKLI}" > "${SANDBOX}/old.env"
   mkdir -p "${GVPN_HOPRD_V4_ENV_DIR}"
   cp "${SANDBOX}/old.env" "${GVPN_HOPRD_V4_ENV_DIR}/10-provisioned.env"
-  printf '{"node_address":"0xaaa","safe_address":"%s","module_address":"%s"}\n' \
-    "${OLD_SAFE}" "${OLD_MODULE}" > "${GVPN_PROVISIONING_JSON}"
+  printf '{"node_address":"%s","safe_address":"%s","module_address":"%s"}\n' \
+    "${NODE}" "${OLD_SAFE}" "${OLD_MODULE}" > "${GVPN_PROVISIONING_JSON}"
+  printf '{"node_address":"%s"}\n' "${NODE}" > "${GVPN_IDENTITY_DIR}/node.json"
 
-  mock_cmd hoprd-v4 'exec /bin/sleep 300'
+  # The mocks that have to take real time run the sleep the sleep mock shadows.
+  REAL_SLEEP="$(command -v sleep)"
+  export REAL_SLEEP
+  mock_cmd hoprd-v4 'exec "${REAL_SLEEP}" 300'
   mock_cmd systemctl 'exit 0'
   mock_cmd sleep 'exit 0'
   mock_cmd systemd-creds '
@@ -104,6 +109,8 @@ mock_default_cast() {
       call\ 0x3333*"getThreshold()(uint256)"*) [[ -z "${TARGET_NOT_SAFE:-}" ]] || exit 1; echo 1 ;;
       *"getThreshold()(uint256)"*) echo 1 ;;
       *"isOwner(address)(bool)"*) echo true ;;
+      *"isModuleEnabled(address)(bool)"*) echo "${MODULE_ENABLED:-true}" ;;
+      *"isNode(address)(bool)"*) echo "${IS_NODE:-true}" ;;
       *"wallet address"*) echo 0xowner ;;
       *"nonce()(uint256)"*) echo 7 ;;
       *"balanceOf(address)(uint256)"*) cat "${SANDBOX}/token-balance" ;;
@@ -152,9 +159,11 @@ refute_logged() {
   [ -s "${GVPN_MIGRATION_MARKER}" ]
   grep -q 'systemctl stop hoprd.service' "${MOCK_LOG}"
   grep -q 'systemctl start hoprd.service' "${MOCK_LOG}"
-  # Both channels, in both directions, were closed.
-  [ "$(grep -c 'X DELETE' "${MOCK_LOG}")" -eq 2 ]
-  grep -q 'direction=incoming' "${MOCK_LOG}"
+  # Only the outgoing channel holds this node's stake; the incoming one is the
+  # counterparty's to close.
+  [ "$(grep -c 'X DELETE' "${MOCK_LOG}")" -eq 1 ]
+  grep -q 'X DELETE .*/channels/0xaaaa$' "${MOCK_LOG}"
+  refute_logged 'direction=incoming'
   # The v4 node ran on the old data and on the decrypted copy in the work dir.
   grep -q "hoprd-v4 .*--data ${GVPN_HOPRD_V4_DATA} .*--identity ${SANDBOX}/gvpn-exit-migrate" "${MOCK_LOG}"
   # The sealed v4 credentials and the old provisioning file are untouched.
@@ -224,6 +233,8 @@ refute_logged() {
       code\ *) echo 0x6080 ;;
       *"getThreshold()(uint256)"*) echo 1 ;;
       *"isOwner(address)(bool)"*) echo true ;;
+      *"isModuleEnabled(address)(bool)"*) echo true ;;
+      *"isNode(address)(bool)"*) echo true ;;
       *"wallet address"*) echo 0xowner ;;
       *"nonce()(uint256)"*) echo 7 ;;
       *"balanceOf(address)(uint256)"*) echo 7000000000000000000 ;;
@@ -367,8 +378,8 @@ mock_two_phase_curl() {
   echo '{"unredeemedValue":"2 wxHOPR"}' > "${SANDBOX}/stats.json"
   run "${MIGRATE}" close-v4-channels --wait 0 --forfeit-tickets
   [ "${status}" -eq 0 ]
-  [[ "${output}" == *"forfeiting 2 wxHOPR"* ]]
-  [ "$(grep -c 'X DELETE' "${MOCK_LOG}")" -eq 2 ]
+  [[ "${output}" == *"leaving 2 wxHOPR of v4 tickets unredeemed"* ]]
+  [ "$(grep -c 'X DELETE' "${MOCK_LOG}")" -eq 1 ]
 }
 
 @test "a multi-owner old Safe is refused before hoprd is stopped" {
@@ -528,7 +539,7 @@ mock_two_phase_curl() {
   [ "${status}" -eq 0 ]
   [[ "${output}" == *"${old_checksummed} is the old Safe"* ]]
   refute_logged '^cast send '
-  [ "$(grep -c 'X DELETE' "${MOCK_LOG}")" -eq 2 ]
+  [ "$(grep -c 'X DELETE' "${MOCK_LOG}")" -eq 1 ]
   grep -qx "HOPRD_SAFE_ADDRESS=${old_mixed}" "${GVPN_HOPRD_ENV_DIR}/10-provisioned.env"
   run "${MIGRATE}" move-v4-safe-funds --to "${old_mixed}"
   [ "${status}" -eq 0 ]
@@ -561,7 +572,7 @@ mock_two_phase_curl() {
   export CHAIN_STATUS=Degraded
   run "${MIGRATE}" close-v4-channels --wait 0
   [ "${status}" -eq 0 ]
-  [ "$(grep -c 'X DELETE' "${MOCK_LOG}")" -eq 2 ]
+  [ "$(grep -c 'X DELETE' "${MOCK_LOG}")" -eq 1 ]
 }
 
 @test "the RPC URL reaches cast through its environment, never a command line" {
@@ -627,7 +638,7 @@ mock_two_phase_curl() {
 }
 
 @test "a failed run keeps the v4 node log, a successful one removes it" {
-  mock_cmd hoprd-v4 'echo "v4 node says hello"; exec /bin/sleep 300'
+  mock_cmd hoprd-v4 'echo "v4 node says hello"; exec "${REAL_SLEEP}" 300'
   mock_two_phase_curl
   export FINALIZE_NEVER=1
   run "${MIGRATE}" close-v4-channels --wait 0
@@ -649,4 +660,279 @@ mock_two_phase_curl() {
   [[ "${output}" == *"cannot update ${GVPN_PROVISIONING_JSON}"* ]]
   [ -z "$(compgen -G "${GVPN_PROVISIONING_JSON}.*")" ]
   [ "$(cat "${GVPN_PROVISIONING_JSON}")" = "not json" ]
+}
+
+# Only outgoing channels hold this node's stake. An incoming channel is the
+# counterparty's: it can reopen it at any time, so it must not gate the run.
+@test "an incoming channel that stays open is left alone and does not hold up the run" {
+  mock_cmd curl '
+    case "$*" in
+      *"/startedz") exit 0 ;;
+      *"/node/status") echo "{\"components\":{\"chain\":{\"status\":\"Ready\"}}}" ;;
+      *"/channels?includingClosed=true"*)
+        echo "{\"outgoing\":[{\"peerAddress\":\"0xaaaa\",\"status\":\"Closed\"}],\"incoming\":[{\"peerAddress\":\"0xbbbb\",\"status\":\"Open\"}]}" ;;
+      *"/tickets/redeem"*) echo "" ;;
+      *"/tickets/statistics"*) cat "${SANDBOX}/stats.json" ;;
+      *) echo "unexpected curl: $*" >&2; exit 1 ;;
+    esac'
+  run "${MIGRATE}" migrate --safe-address "${NEW_SAFE}" --module-address "${NEW_MODULE}" --wait 300
+  [ "${status}" -eq 0 ]
+  refute_logged 'X DELETE'
+  refute_logged -x 'sleep 300'
+  grep -qx "HOPRD_SAFE_ADDRESS=${NEW_SAFE}" "${GVPN_HOPRD_ENV_DIR}/10-provisioned.env"
+}
+
+@test "a channel listing that cannot be read fails the run without the grace period wait" {
+  mock_cmd curl '
+    case "$*" in
+      *"/startedz") exit 0 ;;
+      *"/node/status") echo "{\"components\":{\"chain\":{\"status\":\"Ready\"}}}" ;;
+      *"/channels?includingClosed=true"*) exit 22 ;;
+      *"/tickets/redeem"*) echo "" ;;
+      *"/tickets/statistics"*) cat "${SANDBOX}/stats.json" ;;
+      *) echo "unexpected curl: $*" >&2; exit 1 ;;
+    esac'
+  run "${MIGRATE}" migrate --safe-address "${NEW_SAFE}" --module-address "${NEW_MODULE}" --wait 300
+  [ "${status}" -ne 0 ]
+  [[ "${output}" == *"cannot read the v4 node's channel listing"* ]]
+  # One failed read is retried before the run gives up.
+  [ "$(grep -c '/channels?includingClosed=true' "${MOCK_LOG}")" -eq 3 ]
+  refute_logged -x 'sleep 300'
+  refute_logged '^cast send '
+  [ ! -e "${GVPN_HOPRD_ENV_DIR}/10-provisioned.env" ]
+}
+
+@test "--skip-v4-cleanup moves the funds and configures v5 without the v4 node" {
+  # Not even the v4 database or the cleanup binary is needed.
+  rm -rf "${GVPN_HOPRD_V4_DATA}" "${MOCK_BIN}/hoprd-v4"
+  run "${MIGRATE}" migrate --safe-address "${NEW_SAFE}" --module-address "${NEW_MODULE}" --skip-v4-cleanup
+  [ "${status}" -eq 0 ]
+  [[ "${output}" == *"skipping the v4 channel cleanup"* ]]
+  [[ "${output}" == *"moved 7000000000000000000 wei wxHOPR"* ]]
+  refute_logged '^hoprd-v4 '
+  refute_logged '^systemd-creds '
+  refute_logged '^curl '
+  grep -qx "HOPRD_SAFE_ADDRESS=${NEW_SAFE}" "${GVPN_HOPRD_ENV_DIR}/10-provisioned.env"
+  grep -q 'systemctl start hoprd.service' "${MOCK_LOG}"
+}
+
+@test "--v4-start-timeout bounds the wait for the v4 node and the error names the way on" {
+  mock_cmd curl 'exit 22'
+  run "${MIGRATE}" close-v4-channels --wait 0 --v4-start-timeout 2
+  [ "${status}" -ne 0 ]
+  [[ "${output}" == *"within 2s"* ]]
+  [[ "${output}" == *"--v4-start-timeout"* ]]
+  [[ "${output}" == *"--skip-v4-cleanup"* ]]
+  # Polled twice a second.
+  [ "$(grep -cx 'sleep 0.5' "${MOCK_LOG}")" -eq 4 ]
+}
+
+@test "--v4-start-timeout must be a number of seconds" {
+  run "${MIGRATE}" close-v4-channels --v4-start-timeout soon
+  [ "${status}" -ne 0 ]
+  [[ "${output}" == *"--v4-start-timeout"* ]]
+  refute_logged 'systemctl stop'
+}
+
+@test "a v4 node that exits at once fails the run and the error names the way on" {
+  mock_cmd hoprd-v4 'echo "blokli unreachable"; exit 1'
+  mock_cmd curl 'exit 22'
+  run "${MIGRATE}" migrate --safe-address "${NEW_SAFE}" --module-address "${NEW_MODULE}" --wait 0
+  [ "${status}" -ne 0 ]
+  [[ "${output}" == *"--skip-v4-cleanup"* ]]
+  [[ "${output}" == *"--v4-blokli-url"* ]]
+  refute_logged '^cast send '
+}
+
+@test "--v4-blokli-url reaches only the v4 node" {
+  run "${MIGRATE}" migrate --safe-address "${NEW_SAFE}" --module-address "${NEW_MODULE}" --wait 0 \
+    --v4-blokli-url https://old-blokli.example.org
+  [ "${status}" -eq 0 ]
+  grep -q '^hoprd-v4 .*--blokliUrl https://old-blokli.example.org$' "${MOCK_LOG}"
+  grep -qx "HOPRD_BLOKLI_URL=${BLOKLI}" "${GVPN_HOPRD_ENV_DIR}/10-provisioned.env"
+  [ "$(cat "${GVPN_HOPRD_V4_ENV_DIR}/10-provisioned.env")" = "$(cat "${SANDBOX}/old.env")" ]
+}
+
+@test "a module that is not enabled on the new Safe is refused before hoprd is stopped" {
+  export MODULE_ENABLED=false
+  run "${MIGRATE}" migrate --safe-address "${NEW_SAFE}" --module-address "${NEW_MODULE}" --wait 0
+  [ "${status}" -ne 0 ]
+  [[ "${output}" == *"is not enabled on the Safe"* ]]
+  grep -q "^cast call ${NEW_SAFE} isModuleEnabled(address)(bool) ${NEW_MODULE}$" "${MOCK_LOG}"
+  refute_logged 'systemctl stop'
+  refute_logged '^cast send '
+  [ ! -e "${GVPN_HOPRD_ENV_DIR}/10-provisioned.env" ]
+}
+
+@test "a module that does not include this node is refused before hoprd is stopped" {
+  export IS_NODE=false
+  run "${MIGRATE}" migrate --safe-address "${NEW_SAFE}" --module-address "${NEW_MODULE}" --wait 0
+  [ "${status}" -ne 0 ]
+  [[ "${output}" == *"does not include this node"* ]]
+  grep -q "^cast call ${NEW_MODULE} isNode(address)(bool) ${NODE}$" "${MOCK_LOG}"
+  refute_logged 'systemctl stop'
+  refute_logged '^cast send '
+  [ ! -e "${GVPN_HOPRD_ENV_DIR}/10-provisioned.env" ]
+}
+
+@test "configure-v5 checks the Safe and module pair when it is given an RPC URL" {
+  export IS_NODE=false
+  echo 'https://rpc.example.org' > "${SANDBOX}/rpc.url"
+  unset GVPN_PROVIDER_URL
+  run "${MIGRATE}" configure-v5 --safe-address "${NEW_SAFE}" --module-address "${NEW_MODULE}" \
+    --provider-url-file "${SANDBOX}/rpc.url"
+  [ "${status}" -ne 0 ]
+  [[ "${output}" == *"does not include this node"* ]]
+  refute_logged 'systemctl stop'
+  [ ! -e "${GVPN_HOPRD_ENV_DIR}/10-provisioned.env" ]
+}
+
+@test "configure-v5 without an RPC URL writes the configuration and says the pair is unchecked" {
+  unset GVPN_PROVIDER_URL
+  export IS_NODE=false
+  run "${MIGRATE}" configure-v5 --safe-address "${NEW_SAFE}" --module-address "${NEW_MODULE}"
+  [ "${status}" -eq 0 ]
+  [[ "${output}" == *"not checked"* ]]
+  refute_logged '^cast call '
+  grep -qx "HOPRD_SAFE_ADDRESS=${NEW_SAFE}" "${GVPN_HOPRD_ENV_DIR}/10-provisioned.env"
+}
+
+@test "hoprd that does not stay up with the v5 configuration fails the run" {
+  mock_cmd systemctl '
+    case "$*" in
+      *is-active*) exit 3 ;;
+    esac
+    exit 0'
+  run "${MIGRATE}" migrate --safe-address "${NEW_SAFE}" --module-address "${NEW_MODULE}" --wait 0
+  [ "${status}" -ne 0 ]
+  [[ "${output}" == *"did not stay up"* ]]
+  [[ "${output}" == *"configure-v5"* ]]
+  [[ "${output}" != *"Migration complete"* ]]
+  grep -qx 'sleep 60' "${MOCK_LOG}"
+  # The configuration is written: the funds have moved, so it is corrected, not undone.
+  grep -qx "HOPRD_SAFE_ADDRESS=${NEW_SAFE}" "${GVPN_HOPRD_ENV_DIR}/10-provisioned.env"
+}
+
+@test "hoprd that systemd restarted during the watch fails the run" {
+  mock_cmd systemctl '
+    case "$*" in
+      *NRestarts*)
+        count="$(cat "${SANDBOX}/restarts" 2>/dev/null || echo 0)"
+        echo "${count}"
+        echo $(( count + 1 )) > "${SANDBOX}/restarts" ;;
+    esac
+    exit 0'
+  run "${MIGRATE}" configure-v5 --safe-address "${NEW_SAFE}" --module-address "${NEW_MODULE}"
+  [ "${status}" -ne 0 ]
+  [[ "${output}" == *"did not stay up"* ]]
+}
+
+@test "the helper holds the OS update lock while hoprd is stopped" {
+  mock_cmd systemctl '
+    if [[ "$1" == stop ]]; then
+      if flock -n "${GVPN_RUN_DIR}/update.lock" true; then
+        echo free > "${SANDBOX}/lock-state"
+      else
+        echo held > "${SANDBOX}/lock-state"
+      fi
+    fi
+    exit 0'
+  run "${MIGRATE}" migrate --safe-address "${NEW_SAFE}" --module-address "${NEW_MODULE}" --wait 0
+  [ "${status}" -eq 0 ]
+  [ "$(cat "${SANDBOX}/lock-state")" = "held" ]
+  # Released with the run, so the next update or migration is not blocked.
+  flock -n "${GVPN_RUN_DIR}/update.lock" true
+}
+
+# hold_lock paces its holder with the sleep on PATH, which must be the real one.
+unmock_sleep() {
+  rm -f "${MOCK_BIN}/sleep"
+  export GVPN_SLEEP_BIN="${REAL_SLEEP}"
+}
+
+@test "a run that cannot take the OS update lock stops before anything is touched" {
+  export GVPN_MIGRATE_LOCK_WAIT_S=1
+  unmock_sleep
+  hold_lock "${GVPN_RUN_DIR}/update.lock"
+  run "${MIGRATE}" migrate --safe-address "${NEW_SAFE}" --module-address "${NEW_MODULE}" --wait 0
+  release_lock
+  [ "${status}" -ne 0 ]
+  [[ "${output}" == *"${GVPN_RUN_DIR}/update.lock"* ]]
+  refute_logged 'systemctl stop'
+  refute_logged '^hoprd-v4 '
+}
+
+@test "the v4 node does not inherit the OS update lock" {
+  mock_cmd hoprd-v4 '
+    if { true >&9; } 2>/dev/null; then echo open > "${SANDBOX}/v4-fd9"; else echo closed > "${SANDBOX}/v4-fd9"; fi
+    exec "${REAL_SLEEP}" 300'
+  run "${MIGRATE}" close-v4-channels --wait 0
+  [ "${status}" -eq 0 ]
+  [ "$(cat "${SANDBOX}/v4-fd9")" = "closed" ]
+}
+
+@test "status does not wait for the OS update lock" {
+  export GVPN_MIGRATE_LOCK_WAIT_S=1
+  unmock_sleep
+  hold_lock "${GVPN_RUN_DIR}/update.lock"
+  run "${MIGRATE}" status
+  release_lock
+  [ "${status}" -eq 0 ]
+}
+
+@test "a v4 node that ignores the stop request is killed after the stop timeout" {
+  export GVPN_V4_STOP_TIMEOUT_S=1
+  mock_cmd hoprd-v4 '
+    echo $$ > "${SANDBOX}/v4.pid"
+    trap "" TERM
+    while :; do "${REAL_SLEEP}" 0.1; done'
+  run "${MIGRATE}" close-v4-channels --wait 0
+  [ "${status}" -eq 0 ]
+  [[ "${output}" == *"did not stop within 1s"* ]]
+  ! kill -0 "$(cat "${SANDBOX}/v4.pid")" 2>/dev/null
+}
+
+# A dropped SSH session or a shutdown ends the helper with a signal. bash runs
+# the exit handler with the status of the last command, which is 0.
+@test "an interrupted run keeps the v4 node log, stops the node and leaves nothing decrypted" {
+  mock_cmd hoprd-v4 'echo $$ > "${SANDBOX}/v4.pid"; echo "v4 node says hello"; exec "${REAL_SLEEP}" 300'
+  mock_cmd sleep '
+    if [[ "$1" == 300 ]]; then
+      echo $$ > "${SANDBOX}/wait.pid"
+      exec "${REAL_SLEEP}" 30
+    fi
+    exit 0'
+  mock_two_phase_curl
+  "${MIGRATE}" close-v4-channels --wait 300 > "${SANDBOX}/run.out" 2>&1 3>&- &
+  local helper=$! deadline=$(( SECONDS + 10 ))
+  until [[ -s "${SANDBOX}/wait.pid" ]]; do
+    (( SECONDS < deadline )) || { cat "${SANDBOX}/run.out"; false; }
+    "${REAL_SLEEP}" 0.05
+  done
+  kill -TERM "${helper}"
+  local status=0
+  wait "${helper}" || status=$?
+  kill "$(cat "${SANDBOX}/wait.pid")" 2>/dev/null || true
+  [ "${status}" -eq 143 ]
+  grep -q 'v4 node says hello' "${GVPN_STATE_DIR}/hoprd-v4-migrate.log"
+  ! kill -0 "$(cat "${SANDBOX}/v4.pid")" 2>/dev/null
+  [ -z "$(compgen -G "${SANDBOX}/gvpn-exit-migrate.*")" ]
+}
+
+@test "a failed run on a device without the v5 configuration says hoprd stays stopped" {
+  mock_two_phase_curl
+  export FINALIZE_NEVER=1
+  run "${MIGRATE}" close-v4-channels --wait 0
+  [ "${status}" -ne 0 ]
+  [[ "${output}" == *"hoprd.service stays stopped"* ]]
+  [[ "${output}" != *"hoprd.service restarted"* ]]
+}
+
+@test "a failed run on a migrated device restarts hoprd and says so" {
+  "${MIGRATE}" configure-v5 --safe-address "${NEW_SAFE}" --module-address "${NEW_MODULE}"
+  mock_two_phase_curl
+  export FINALIZE_NEVER=1
+  run "${MIGRATE}" close-v4-channels --wait 0
+  [ "${status}" -ne 0 ]
+  [[ "${output}" == *"hoprd.service restarted"* ]]
 }

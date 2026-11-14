@@ -7,15 +7,21 @@
 #       whether the migration has already written the v5 configuration.
 #
 #   gvpn-exit-hoprd-migrate close-v4-channels [--wait SECONDS]
-#       [--forfeit-tickets]
+#       [--forfeit-tickets] [--v4-start-timeout SECONDS]
+#       [--v4-blokli-url https://..]
 #       Start the bundled v4 hoprd on the old database and identity, redeem its
-#       tickets, initiate closure of every open outgoing and incoming channel,
-#       wait for the closure grace period, finalize them, and stop the node
-#       again. Tickets still unredeemed after the redemption wait stop the run,
-#       because closing a channel voids them; --forfeit-tickets closes anyway.
+#       tickets, initiate closure of every open outgoing channel, wait for the
+#       closure grace period, finalize them, and stop the node again. Only an
+#       outgoing channel holds this node's stake; an incoming channel is its
+#       counterparty's to close and is left alone. Tickets still unredeemed
+#       after the redemption wait stop the run, because the v5 node does not
+#       redeem v4 tickets; --forfeit-tickets continues without their value.
 #       A listing without an open channel is believed only while the node
 #       reports its chain connector Ready; otherwise the run stops, because a
 #       node that has not loaded its channels yet lists none.
+#       --v4-start-timeout is how long the v4 node may take to report started
+#       (default 90). --v4-blokli-url replaces the Blokli URL of the v4
+#       provisioning file for the cleanup node only; the file is not changed.
 #
 #   gvpn-exit-hoprd-migrate move-v4-safe-funds --to 0xSAFE
 #       --provider-url-file FILE
@@ -44,20 +50,33 @@
 #
 #   gvpn-exit-hoprd-migrate configure-v5 --safe-address 0xSAFE
 #       --module-address 0xMODULE [--blokli-url https://..]
-#       Write the v5 provisioning file. The Blokli URL defaults to the one the
-#       device already runs with, else the one the v4 provisioning file carries.
+#       [--provider-url-file FILE]
+#       Write the v5 provisioning file and restart hoprd. The Blokli URL
+#       defaults to the one the device already runs with, else the one the v4
+#       provisioning file carries. With an RPC URL the Safe and module are
+#       checked first: the module must be enabled on the Safe and include this
+#       node. hoprd must then stay up for a minute, or the command fails.
 #
 #   gvpn-exit-hoprd-migrate migrate --safe-address 0xSAFE
 #       --module-address 0xMODULE --provider-url-file FILE
 #       --safe-owner-keystore FILE --safe-owner-password-file FILE
 #       [--blokli-url https://..] [--wait SECONDS] [--forfeit-tickets]
-#       [--native]
+#       [--native] [--skip-v4-cleanup] [--v4-start-timeout SECONDS]
+#       [--v4-blokli-url https://..]
 #       Do all three in one run: stop hoprd, close the v4 channels, move the
 #       old Safe's funds to the new Safe, write the v5 configuration and start
 #       hoprd again. Every step is safe to repeat; a run that failed halfway is
 #       resumed by running the same command again. 0xSAFE is checked like
-#       --to above. When it is the old Safe, the funds stay where they are and
+#       --to above, and the pair like configure-v5 above, before hoprd is
+#       stopped. When 0xSAFE is the old Safe, the funds stay where they are and
 #       neither the RPC URL nor the owner keystore is needed.
+#       --skip-v4-cleanup leaves the v4 node out: for a device whose v4 node
+#       does not start any more. Stake in an open v4 channel and unredeemed
+#       tickets then stay behind until close-v4-channels and
+#       move-v4-safe-funds are run again.
+#
+# Every command but status holds the OS update lock while it runs, so an
+# update cannot reboot the device halfway and two runs cannot overlap.
 #
 # The v5 service does not touch /var/lib/hoprd or the sealed v4 credentials.
 # Until this helper writes the v5 provisioning file, hoprd.service is held
@@ -76,6 +95,11 @@ V4_API_PORT="${GVPN_V4_API_PORT:-3101}"
 V4_P2P_PORT="${GVPN_V4_P2P_PORT:-9191}"
 API_TIMEOUT_S="${GVPN_MIGRATE_API_TIMEOUT_S:-30}"
 READY_TIMEOUT_S="${GVPN_V4_READY_TIMEOUT_S:-90}"
+# How long the v4 node gets to stop on SIGTERM before it is killed.
+V4_STOP_TIMEOUT_S="${GVPN_V4_STOP_TIMEOUT_S:-60}"
+# How long hoprd has to stay up with the v5 configuration; the required boot
+# check (10-gvpn-units.sh) asks the same of it on every boot.
+V5_STABLE_S="${GVPN_HOPRD_STABLE_S:-60}"
 CLOSURE_WAIT_S="${GVPN_CHANNEL_CLOSURE_WAIT_S:-330}"
 TICKET_REDEEM_WAIT_S="${GVPN_TICKET_REDEEM_WAIT_S:-300}"
 TICKET_POLL_S="${GVPN_TICKET_POLL_S:-5}"
@@ -101,6 +125,9 @@ V5_ENV_FILE="${GVPN_HOPRD_ENV_DIR}/10-provisioned.env"
 MIGRATION_MARKER="${GVPN_MIGRATION_MARKER:-${GVPN_STATE_DIR}/hoprd-v5-migrated}"
 # Where the v4 cleanup node's log goes when a run fails; root-only.
 V4_LOG_KEEP="${GVPN_V4_LOG_KEEP:-${GVPN_STATE_DIR}/hoprd-v4-migrate.log}"
+# The lock staging and update-apply.sh serialize on.
+UPDATE_LOCK="${GVPN_UPDATE_LOCK:-${GVPN_RUN_DIR}/update.lock}"
+LOCK_WAIT_S="${GVPN_MIGRATE_LOCK_WAIT_S:-300}"
 ADDRESS_RE='^0x[0-9a-fA-F]{40}$'
 
 WORK_DIR=""
@@ -109,6 +136,12 @@ V5_STOPPED=0
 V5_RESTARTED=0
 V5_LEAVE_STOPPED=0
 FORFEIT_TICKETS=0
+# Blokli URL for the v4 cleanup node when it is not the provisioned one.
+V4_BLOKLI_URL=""
+# Set once the command has done its work. The exit handler cannot go by the
+# exit status: a run that a signal ends reaches it with the status of the last
+# command, which is 0.
+COMPLETED=0
 # How cast finds the old Safe owner's key; set by require_safe_transfer.
 WALLET_ARGS=()
 
@@ -122,23 +155,18 @@ usage() {
 }
 
 cleanup() {
-  local status=$?
-  if [[ -n "${V4_PID}" ]] && kill -0 "${V4_PID}" 2>/dev/null; then
-    kill "${V4_PID}" 2>/dev/null || true
-    wait "${V4_PID}" 2>/dev/null || true
-  fi
-  V4_PID=""
+  stop_v4_node
   if [[ -n "${WORK_DIR}" ]]; then
     # The work directory holds the decrypted credentials and goes away; the v4
     # node's log is the only record of why a failed run failed, so it is kept.
-    if (( status != 0 )) && [[ -s "${WORK_DIR}/hoprd-v4.log" ]]; then
+    if (( ! COMPLETED )) && [[ -s "${WORK_DIR}/hoprd-v4.log" ]]; then
       if install -m 0600 "${WORK_DIR}/hoprd-v4.log" "${V4_LOG_KEEP}" 2>/dev/null; then
         log "the v4 cleanup node's log is kept at ${V4_LOG_KEEP}"
       else
         log "WARN could not keep the v4 cleanup node's log at ${V4_LOG_KEEP}; its last lines:"
         tail -n 20 "${WORK_DIR}/hoprd-v4.log" >&2 || true
       fi
-    elif (( status == 0 )); then
+    elif (( COMPLETED )); then
       rm -f "${V4_LOG_KEEP}"
     fi
     rm -rf "${WORK_DIR}"
@@ -147,10 +175,14 @@ cleanup() {
   # An interrupted migration must not leave the exit node stopped. On success
   # the explicit restart below has already happened, so this is a no-op.
   if (( V5_STOPPED && ! V5_RESTARTED && ! V5_LEAVE_STOPPED )); then
-    if "${SYSTEMCTL_BIN}" start hoprd.service; then
+    if ! "${SYSTEMCTL_BIN}" start hoprd.service; then
+      log "WARN hoprd.service could not be restarted; start it after the migration"
+    elif [[ -f "${V5_ENV_FILE}" ]]; then
       log "hoprd.service restarted; the migration did not finish, rerun it"
     else
-      log "WARN hoprd.service could not be restarted; start it after the migration"
+      # The unit's own condition holds hoprd until the v5 file exists, and a
+      # start that it skips still succeeds.
+      log "hoprd.service stays stopped until the v5 configuration is written; the migration did not finish, rerun it"
     fi
   fi
 }
@@ -160,6 +192,27 @@ require_root() {
   # GVPN_ASSUME_ROOT keeps the unit suite runnable without root; the device
   # never sets it.
   [[ "${GVPN_ASSUME_ROOT:-0}" == 1 || "$(id -u)" == 0 ]] || die "run this helper as root (sudo)"
+}
+
+# Staging and update-apply.sh hold this lock, and so does this helper from
+# before it stops hoprd until it exits. update-apply.sh reboots the device,
+# which must not happen between the channel closure and the fund move, and two
+# runs of this helper must not start the v4 node twice on one database.
+lock_updates() {
+  mkdir -p "$(dirname "${UPDATE_LOCK}")"
+  exec 9>"${UPDATE_LOCK}"
+  flock -n 9 && return 0
+  log "waiting up to ${LOCK_WAIT_S}s for an OS update step or another migration run to finish"
+  flock -w "${LOCK_WAIT_S}" 9 \
+    || die "${UPDATE_LOCK} is still held by an OS update step or another migration run; rerun when it has finished"
+}
+
+# load_provider_url: take the RPC URL from --provider-url-file when one is
+# given; --provider-url (or GVPN_PROVIDER_URL) stays as it is otherwise.
+load_provider_url() {
+  [[ -n "${PROVIDER_URL_FILE}" ]] || return 0
+  [[ -r "${PROVIDER_URL_FILE}" ]] || die "cannot read ${PROVIDER_URL_FILE}"
+  PROVIDER_URL="$(head -n 1 "${PROVIDER_URL_FILE}")"
 }
 
 # The node's own /account/withdraw is a transfer from the node EOA, not from
@@ -176,10 +229,7 @@ require_safe_transfer() {
     || die "set --safe-owner-password-file (or GVPN_SAFE_OWNER_PASSWORD_FILE) to the keystore's password file"
   [[ -r "${SAFE_OWNER_PASSWORD_FILE}" ]] || die "cannot read ${SAFE_OWNER_PASSWORD_FILE}"
   WALLET_ARGS=(--keystore "${SAFE_OWNER_KEYSTORE}" --password-file "${SAFE_OWNER_PASSWORD_FILE}")
-  if [[ -n "${PROVIDER_URL_FILE}" ]]; then
-    [[ -r "${PROVIDER_URL_FILE}" ]] || die "cannot read ${PROVIDER_URL_FILE}"
-    PROVIDER_URL="$(head -n 1 "${PROVIDER_URL_FILE}")"
-  fi
+  load_provider_url
   https_url_ok "${PROVIDER_URL}" \
     || die "set --provider-url-file (or GVPN_PROVIDER_URL_FILE) to a file whose first line is a Gnosis Chain HTTPS RPC endpoint"
   [[ "${HOPR_TOKEN_ADDRESS}" =~ ${ADDRESS_RE} ]] || die "invalid wxHOPR token address"
@@ -242,6 +292,43 @@ require_fund_move() {
   require_safe_target "${target}"
 }
 
+# This node's on-chain address, as provisioning recorded it.
+node_address() {
+  local file address
+  for file in "${PROVISIONING_JSON}" "${GVPN_IDENTITY_DIR}/node.json"; do
+    [[ -s "${file}" ]] || continue
+    address="$(jq -r '.node_address // empty' "${file}" 2>/dev/null)" || continue
+    if [[ "${address}" =~ ${ADDRESS_RE} ]]; then
+      echo "${address}"
+      return 0
+    fi
+  done
+  return 1
+}
+
+# check_node_pair SAFE MODULE: hoprd v5 only works with a module that is
+# enabled on the Safe and includes this node. A pair copied from another
+# device passes every other check, and the funds would move to that device's
+# Safe, so the chain is asked before hoprd is stopped. Without an RPC URL
+# (funds that stay in the old Safe, configure-v5) the pair goes unchecked.
+check_node_pair() {
+  local safe="$1" module="$2" node
+  load_provider_url
+  if [[ -z "${PROVIDER_URL}" ]]; then
+    log "WARN no RPC URL given: not checked that the module $(checksum_address "${module}") is enabled on the Safe $(checksum_address "${safe}") and includes this node"
+    return 0
+  fi
+  https_url_ok "${PROVIDER_URL}" \
+    || die "--provider-url-file must name a file whose first line is a Gnosis Chain HTTPS RPC endpoint"
+  command -v "${CAST_BIN}" >/dev/null 2>&1 || die "${CAST_BIN} is missing; it reads the Safe and the module"
+  node="$(node_address)" \
+    || die "cannot read this node's address from ${PROVISIONING_JSON} or ${GVPN_IDENTITY_DIR}/node.json"
+  [[ "$(cast_call "${safe}" "isModuleEnabled(address)(bool)" "${module}")" == true ]] \
+    || die "the module $(checksum_address "${module}") is not enabled on the Safe $(checksum_address "${safe}"); compare both addresses with what hopli safe-module create printed for this node"
+  [[ "$(cast_call "${module}" "isNode(address)(bool)" "${node}")" == true ]] \
+    || die "the module $(checksum_address "${module}") does not include this node $(checksum_address "${node}"); the Safe and module belong to another node, or the node was never added to the module"
+}
+
 require_old_env() {
   [[ -f "${V4_ENV_FILE}" ]] || die "no v4 provisioning file at ${V4_ENV_FILE}"
 }
@@ -264,7 +351,7 @@ load_old_provisioning() {
   require_old_env
   OLD_SAFE="$(old_value HOPRD_SAFE_ADDRESS)"
   OLD_MODULE="$(old_value HOPRD_MODULE_ADDRESS)"
-  OLD_BLOKLI="$(old_value HOPRD_BLOKLI_URL)"
+  OLD_BLOKLI="${V4_BLOKLI_URL:-$(old_value HOPRD_BLOKLI_URL)}"
   [[ "${OLD_SAFE}" =~ ${ADDRESS_RE} ]] || die "the v4 provisioning file has no usable HOPRD_SAFE_ADDRESS"
   [[ "${OLD_MODULE}" =~ ${ADDRESS_RE} ]] || die "the v4 provisioning file has no usable HOPRD_MODULE_ADDRESS"
   https_url_ok "${OLD_BLOKLI}" || die "the v4 provisioning file has no usable HOPRD_BLOKLI_URL"
@@ -305,6 +392,13 @@ api_post() {
     -H @"${WORK_DIR}/api-header" -H 'Content-Type: application/json' -X POST "$@"
 }
 
+# v4_start_failed REASON: the v4 node gates the channel cleanup, not the
+# device. Name what the operator can do, so a v4 node that cannot start any
+# more does not keep the exit down.
+v4_start_failed() {
+  die "$1. Rerun to try again: --v4-start-timeout SECONDS waits longer, --v4-blokli-url URL gives the v4 node another Blokli endpoint. If the v4 node does not start at all, migrate --skip-v4-cleanup moves the funds and starts v5 without it"
+}
+
 start_v4_node() {
   local ready=0 tries=0 uid gid
   local -a run_as=()
@@ -316,6 +410,8 @@ start_v4_node() {
   fi
   log "starting the v4 cleanup node on the old database and identity"
   # Export the secrets in the child instead of putting them in env's argv.
+  # The child closes the update lock: a node that outlives this helper must
+  # not keep OS updates waiting.
   (
     HOPRD_PASSWORD="$(< "${WORK_DIR}/hoprd.password")"
     HOPRD_API_TOKEN="$(< "${WORK_DIR}/hoprd.api-token")"
@@ -327,7 +423,7 @@ start_v4_node() {
         --host "127.0.0.1:${V4_P2P_PORT}" \
         --safeAddress "${OLD_SAFE}" --moduleAddress "${OLD_MODULE}" \
         --blokliUrl "${OLD_BLOKLI}"
-  ) >"${WORK_DIR}/hoprd-v4.log" 2>&1 &
+  ) 9>&- >"${WORK_DIR}/hoprd-v4.log" 2>&1 &
   V4_PID=$!
 
   # /startedz only needs the node process and its chain connector, not a
@@ -338,7 +434,7 @@ start_v4_node() {
     if ! kill -0 "${V4_PID}" 2>/dev/null; then
       log "the v4 cleanup node exited; last log lines:"
       tail -n 20 "${WORK_DIR}/hoprd-v4.log" >&2 || true
-      die "v4 hoprd did not start"
+      v4_start_failed "v4 hoprd did not start"
     fi
     if api "http://127.0.0.1:${V4_API_PORT}/startedz" >/dev/null 2>&1; then
       ready=1
@@ -347,17 +443,31 @@ start_v4_node() {
     tries=$(( tries - 1 ))
     "${SLEEP_BIN}" 0.5
   done
-  (( ready )) || die "v4 hoprd did not become ready within ${READY_TIMEOUT_S}s"
+  (( ready )) || v4_start_failed "v4 hoprd did not become ready within ${READY_TIMEOUT_S}s"
   # /startedz says the process is up; give the chain connector/Blokli index a
   # moment before treating an empty channel listing as "nothing to close".
   "${SLEEP_BIN}" "${CHANNEL_SYNC_WAIT_S}"
 }
 
+# Stop the v4 node: SIGTERM, which it handles by tearing itself down, and
+# SIGKILL when it has not exited within the stop timeout. A node that hangs in
+# its teardown must not hold the run between the channel closure and the fund
+# move.
 stop_v4_node() {
-  [[ -n "${V4_PID}" ]] || return 0
-  kill "${V4_PID}" 2>/dev/null || true
-  wait "${V4_PID}" 2>/dev/null || true
+  local pid="${V4_PID}" deadline
+  [[ -n "${pid}" ]] || return 0
   V4_PID=""
+  kill "${pid}" 2>/dev/null || true
+  deadline=$(( SECONDS + V4_STOP_TIMEOUT_S ))
+  while kill -0 "${pid}" 2>/dev/null; do
+    if (( SECONDS >= deadline )); then
+      log "WARN the v4 cleanup node did not stop within ${V4_STOP_TIMEOUT_S}s; killing it"
+      kill -KILL "${pid}" 2>/dev/null || true
+      break
+    fi
+    "${SLEEP_BIN}" 0.2
+  done
+  wait "${pid}" 2>/dev/null || true
 }
 
 # Run a function with the v4 cleanup node up. The caller's environment is
@@ -379,10 +489,11 @@ unredeemed_ticket_value() {
   api "http://127.0.0.1:${V4_API_PORT}/api/v4/tickets/statistics" | jq -er '.unredeemedValue'
 }
 
-# Closing an incoming channel voids the tickets still unredeemed in it, so
-# redemption is requested and then watched until nothing is left. The API
-# answers 202 and redeems asynchronously. Tickets that do not redeem within the
-# wait stop the run unless the operator chose to forfeit them.
+# A redeemed ticket pays into the old Safe, and the v5 node does not redeem v4
+# tickets, so redemption is requested and then watched until nothing is left,
+# before the Safe's balance moves. The API answers 202 and redeems
+# asynchronously. Tickets that do not redeem within the wait stop the run
+# unless the operator chose to go on without their value.
 redeem_v4_tickets() {
   local waited=0 poll="${TICKET_POLL_S}" value=""
   (( poll >= 1 )) || poll=1
@@ -401,10 +512,10 @@ redeem_v4_tickets() {
     waited=$(( waited + poll ))
   done
   if (( FORFEIT_TICKETS )); then
-    log "WARN forfeiting ${value:-an unknown value} of unredeemed v4 tickets"
+    log "WARN leaving ${value:-an unknown value} of v4 tickets unredeemed (--forfeit-tickets)"
     return 0
   fi
-  die "${value:-an unknown value} of v4 tickets is still unredeemed after ${TICKET_REDEEM_WAIT_S}s; rerun to keep redeeming, or pass --forfeit-tickets to close the channels anyway"
+  die "${value:-an unknown value} of v4 tickets is still unredeemed after ${TICKET_REDEEM_WAIT_S}s; rerun to keep redeeming, or pass --forfeit-tickets to continue without that value"
 }
 
 # The v4 node's chain connector status: Ready, Initializing, Degraded or
@@ -435,69 +546,89 @@ require_v4_listing_trusted() {
   local chain
   chain="$(v4_chain_status 2>/dev/null)" || chain="unknown"
   [[ "${chain}" == Ready ]] && return 0
-  die "the v4 node lists no open channel, but its chain connector is ${chain}, so the listing cannot be trusted; rerun the same command. If the old node has no channel and the connector never becomes Ready, skip this step: run move-v4-safe-funds and configure-v5, and rerun close-v4-channels later to confirm"
+  die "the v4 node lists no open outgoing channel, but its chain connector is ${chain}, so the listing cannot be trusted; rerun the same command. If the old node has no channel and the connector never becomes Ready, skip this step: run migrate with --skip-v4-cleanup, and rerun close-v4-channels later to confirm"
 }
 
-# close_channels_once prints nothing and returns 1 when channels remain open;
-# it only tries the API, the caller verifies.
+# list_v4_channels: the v4 node's own channels as JSON, closed ones included.
+# Read up to three times: one failed read would otherwise cost a whole run.
+list_v4_channels() {
+  local attempt
+  for attempt in 1 2 3; do
+    api "http://127.0.0.1:${V4_API_PORT}/api/v4/channels?includingClosed=true" && return 0
+    (( attempt == 3 )) || "${SLEEP_BIN}" "${FINALIZE_SETTLE_S}"
+  done
+  return 1
+}
+
+# close_channels_once asks the node to close every outgoing channel that is
+# not closed; it only tries the API, the caller verifies. Only an outgoing
+# channel holds this node's stake, which returns to the old Safe when the
+# channel closes. An incoming channel holds its counterparty's stake, and the
+# counterparty can reopen it at any time, so it is neither closed nor waited
+# for. Returns 0 when no outgoing channel is open, 1 when it asked for at
+# least one closure and 2 when the listing could not be read.
 close_channels_once() {
-  local channels rows direction peer status
-  channels="$(api "http://127.0.0.1:${V4_API_PORT}/api/v4/channels?includingClosed=true")" \
-    || return 1
-  rows="$(jq -r '
-    ((.outgoing // [])[] | select(.status != "Closed") | ["outgoing", .peerAddress, .status]),
-    ((.incoming // [])[] | select(.status != "Closed") | ["incoming", .peerAddress, .status])
-    | @tsv' <<<"${channels}")" || return 1
+  local channels rows peer status
+  channels="$(list_v4_channels)" || return 2
+  rows="$(jq -r '(.outgoing // [])[] | select(.status != "Closed") | [.peerAddress, .status] | @tsv' \
+    <<<"${channels}")" || return 2
   [[ -n "${rows}" ]] || return 0
-  while IFS=$'\t' read -r direction peer status; do
+  while IFS=$'\t' read -r peer status; do
     [[ -n "${peer}" ]] || continue
-    log "closing ${direction} channel with ${peer} (${status})"
-    local url="http://127.0.0.1:${V4_API_PORT}/api/v4/channels/${peer}"
-    [[ "${direction}" == incoming ]] && url+="?direction=incoming"
+    log "closing outgoing channel with ${peer} (${status})"
     # A 404 means the channel disappeared between the listing and this call:
     # the verification below decides, so a failed individual close is not fatal.
-    api -X DELETE "${url}" >/dev/null 2>&1 || log "WARN close call for ${peer} failed; verifying"
+    api -X DELETE "http://127.0.0.1:${V4_API_PORT}/api/v4/channels/${peer}" >/dev/null 2>&1 \
+      || log "WARN close call for ${peer} failed; verifying"
   done <<<"${rows}"
   return 1
 }
 
 close_v4_channels() {
-  local wait_s="$1"
+  local wait_s="$1" listing=0
   wait_v4_chain_ready \
     || log "WARN the v4 chain connector is not Ready after ${CHAIN_READY_WAIT_S}s; a listing without open channels will not be believed"
   redeem_v4_tickets
   # The v4 node reports started once it has loaded 90 % of the channel graph,
   # so a listing without open channels is read a second time before it is
   # believed; a channel that arrived in between is closed like any other.
-  if close_channels_once; then
+  close_channels_once || listing=$?
+  if (( listing == 0 )); then
     "${SLEEP_BIN}" "${FINALIZE_SETTLE_S}"
-    if close_channels_once; then
+    close_channels_once || listing=$?
+    if (( listing == 0 )); then
       require_v4_listing_trusted
-      log "the v4 node lists no open channel (chain connector Ready); if the old Safe then holds less wxHOPR than the node had staked, rerun close-v4-channels and move-v4-safe-funds"
+      log "the v4 node lists no open outgoing channel (chain connector Ready); if the old Safe then holds less wxHOPR than the node had staked, rerun close-v4-channels and move-v4-safe-funds"
       return 0
     fi
   fi
+  # A listing that cannot be read is not a closure in progress: fail now
+  # instead of after the grace period.
+  (( listing == 1 )) || die "cannot read the v4 node's channel listing; rerun the same command"
   log "closure initiated; waiting ${wait_s}s for the HOPR closure grace period"
   "${SLEEP_BIN}" "${wait_s}"
-  if close_channels_once; then
-    log "all v4 channels are closed"
+  listing=0
+  close_channels_once || listing=$?
+  if (( listing == 0 )); then
+    log "all outgoing v4 channels are closed"
     return 0
   fi
   # A finalization can take a block or two to appear in Blokli. Retry the
   # verification briefly instead of declaring failure on an index that is one
   # block behind.
-  local channels attempt
+  local channels="" attempt
   for attempt in 1 2 3; do
-    channels="$(api "http://127.0.0.1:${V4_API_PORT}/api/v4/channels?includingClosed=true")" || return 1
-    if ! jq -e '[(.outgoing // [])[], (.incoming // [])[]] | any(.status != "Closed")' >/dev/null <<<"${channels}"; then
-      log "all v4 channels are closed"
+    if channels="$(list_v4_channels)" \
+        && ! jq -e '[(.outgoing // [])[]] | any(.status != "Closed")' >/dev/null <<<"${channels}"; then
+      log "all outgoing v4 channels are closed"
       return 0
     fi
     (( attempt == 3 )) || "${SLEEP_BIN}" "${FINALIZE_SETTLE_S}"
   done
-  jq -r '((.outgoing // [])[] | select(.status != "Closed") | "outgoing \(.peerAddress) \(.status)"),
-    ((.incoming // [])[] | select(.status != "Closed") | "incoming \(.peerAddress) \(.status)")' <<<"${channels}" >&2
-  die "v4 channels are still open or pending closure; rerun after the grace period"
+  [[ -n "${channels}" ]] || die "cannot read the v4 node's channel listing; rerun the same command"
+  jq -r '(.outgoing // [])[] | select(.status != "Closed") | "outgoing \(.peerAddress) \(.status)"' \
+    <<<"${channels}" >&2
+  die "outgoing v4 channels are still open or pending closure; rerun after the grace period"
 }
 
 # cast_call prints the first word of a cast result, which strips Foundry's
@@ -671,17 +802,40 @@ stop_v5() {
   log "stopped hoprd.service for the v4 cleanup"
 }
 
+# v5_stays_up: hoprd.service is still active after the watch and systemd did
+# not restart it meanwhile.
+v5_stays_up() {
+  local before
+  before="$("${SYSTEMCTL_BIN}" show -p NRestarts --value hoprd.service)"
+  "${SLEEP_BIN}" "${V5_STABLE_S}"
+  "${SYSTEMCTL_BIN}" is-active --quiet hoprd.service \
+    && [[ "$("${SYSTEMCTL_BIN}" show -p NRestarts --value hoprd.service)" == "${before}" ]]
+}
+
+# systemd reports a start as soon as the process exists. A node that exits
+# again, on a Safe and module that do not fit it or a Blokli endpoint that does
+# not serve it, is restarted every 30 s and turns the first boot of every later
+# update red, so the run only succeeds when hoprd stays up.
 start_v5() {
   if "${SYSTEMCTL_BIN}" start hoprd.service; then
     V5_RESTARTED=1
-    log "hoprd.service started with the v5 configuration"
+    log "hoprd.service started with the v5 configuration; checking that it stays up for ${V5_STABLE_S}s"
   else
     die "hoprd.service did not start; inspect journalctl -u hoprd.service"
   fi
+  v5_stays_up \
+    || die "hoprd.service did not stay up for ${V5_STABLE_S}s. The v5 configuration is written, but hoprd does not run with it: inspect journalctl -u hoprd.service, then correct the Safe, the module or the Blokli URL with configure-v5"
+}
+
+# The options that only reach the v4 cleanup node.
+require_v4_node_options() {
+  [[ "${READY_TIMEOUT_S}" =~ ^[0-9]+$ ]] || die "--v4-start-timeout must be a number of seconds"
+  [[ -z "${V4_BLOKLI_URL}" ]] || https_url_ok "${V4_BLOKLI_URL}" \
+    || die "--v4-blokli-url must be an https:// URL with a host name or IPv4 address"
 }
 
 cmd_migrate() {
-  local safe="" module="" blokli="" wait_s="${CLOSURE_WAIT_S}" native=0
+  local safe="" module="" blokli="" wait_s="${CLOSURE_WAIT_S}" native=0 skip_cleanup=0
   while (( $# )); do
     case "$1" in
       --safe-address) safe="$2"; shift 2 ;;
@@ -695,6 +849,9 @@ cmd_migrate() {
       --wait) wait_s="$2"; shift 2 ;;
       --forfeit-tickets) FORFEIT_TICKETS=1; shift ;;
       --native) native=1; shift ;;
+      --skip-v4-cleanup) skip_cleanup=1; shift ;;
+      --v4-start-timeout) READY_TIMEOUT_S="$2"; shift 2 ;;
+      --v4-blokli-url) V4_BLOKLI_URL="$2"; shift 2 ;;
       *) die "unknown option $1" ;;
     esac
   done
@@ -702,13 +859,22 @@ cmd_migrate() {
   [[ "${safe}" =~ ${ADDRESS_RE} ]] || die "--safe-address must be a 0x-prefixed 20-byte address"
   [[ "${module}" =~ ${ADDRESS_RE} ]] || die "--module-address must be a 0x-prefixed 20-byte address"
   [[ -z "${blokli}" ]] || https_url_ok "${blokli}" || die "--blokli-url must be an https:// URL with a host name or IPv4 address"
+  require_v4_node_options
   require_root
-  require_old_device
+  lock_updates
+  # Without the v4 node only the old Safe's address is needed, not the v4
+  # database, identity or binary.
+  (( skip_cleanup )) || require_old_device
   load_old_provisioning
   require_fund_move "${safe}"
+  check_node_pair "${safe}" "${module}"
 
   stop_v5
-  with_v4_node close_v4_channels "${wait_s}"
+  if (( skip_cleanup )); then
+    log "WARN skipping the v4 channel cleanup: stake in an open v4 channel and unredeemed v4 tickets stay behind until close-v4-channels and move-v4-safe-funds are run again"
+  else
+    with_v4_node close_v4_channels "${wait_s}"
+  fi
   move_v4_safe_funds "${safe}" "${native}"
 
   configure_v5 "${safe}" "${module}" "${blokli}"
@@ -725,11 +891,15 @@ cmd_close() {
     case "$1" in
       --wait) wait_s="$2"; shift 2 ;;
       --forfeit-tickets) FORFEIT_TICKETS=1; shift ;;
+      --v4-start-timeout) READY_TIMEOUT_S="$2"; shift 2 ;;
+      --v4-blokli-url) V4_BLOKLI_URL="$2"; shift 2 ;;
       *) die "unknown option $1" ;;
     esac
   done
   [[ "${wait_s}" =~ ^[0-9]+$ ]] || die "--wait must be a number of seconds"
+  require_v4_node_options
   require_root
+  lock_updates
   require_old_device
   load_old_provisioning
   stop_v5
@@ -757,6 +927,7 @@ cmd_move() {
   [[ -n "${target}" ]] || die "--to is required"
   [[ "${target}" =~ ${ADDRESS_RE} ]] || die "--to must be a 0x-prefixed 20-byte address"
   require_root
+  lock_updates
   load_old_provisioning
   require_fund_move "${target}"
   stop_v5
@@ -772,12 +943,18 @@ cmd_configure() {
       --safe-address) safe="$2"; shift 2 ;;
       --module-address) module="$2"; shift 2 ;;
       --blokli-url) blokli="$2"; shift 2 ;;
+      --provider-url) PROVIDER_URL="$2"; shift 2 ;;
+      --provider-url-file) PROVIDER_URL_FILE="$2"; shift 2 ;;
       *) die "unknown option $1" ;;
     esac
   done
   [[ -n "${safe}" ]] || die "--safe-address is required"
   [[ -n "${module}" ]] || die "--module-address is required"
+  [[ "${safe}" =~ ${ADDRESS_RE} ]] || die "--safe-address must be a 0x-prefixed 20-byte address"
+  [[ "${module}" =~ ${ADDRESS_RE} ]] || die "--module-address must be a 0x-prefixed 20-byte address"
   require_root
+  lock_updates
+  check_node_pair "${safe}" "${module}"
   configure_v5 "${safe}" "${module}" "${blokli}"
   # The running daemon still holds the old Safe; restart it so the new
   # provisioning values and the rendered configuration take effect.
@@ -817,6 +994,7 @@ main() {
     help|-h|--help) usage ;;
     *) usage >&2; return 64 ;;
   esac
+  COMPLETED=1
 }
 
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then

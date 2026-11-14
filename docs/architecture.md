@@ -182,10 +182,12 @@ update still boots green but the exit serves nothing until the migration. That
 keeps the v5 strategies from opening channels or depositing PIX from the old
 Safe before its funds move. The helper runs the bundled v4 binary on the old
 database and identity, which updates that v4 database as it redeems tickets and
-closes channels, withdraws the old Safe's balance to the new Safe, writes the v5
-provisioning file and starts hoprd. The old provisioning file, database and
-sealed credentials stay readable afterwards; the v4 binary can be removed once
-the fleet is migrated.
+closes the outgoing channels, withdraws the old Safe's balance to the new Safe,
+writes the v5 provisioning file, starts hoprd and checks that it stays up. A
+device whose v4 node no longer starts is migrated without that cleanup
+(`--skip-v4-cleanup`). The old provisioning file, database and sealed
+credentials stay readable afterwards; the v4 binary can be removed once the
+fleet is migrated.
 
 ### Provisioning gate
 
@@ -498,6 +500,8 @@ previous image and restore its stale DB snapshot.
 - `sudo systemctl start gvpn-exit-update-apply-now.service` applies a staged
   update immediately; it skips only the time window.
 - Staging and both apply services serialize on `/run/gvpn-exit/update.lock`.
+  `gvpn-exit-hoprd-migrate` holds the same lock while it runs, so an update
+  cannot reboot the device in the middle of the v4 cleanup.
 
 Do not run a plain `bootc upgrade` and reboot: without the snapshot and
 ownership record, data-guard keeps hoprd down.
