@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Write the installer ISO to a whole USB disk (docs/first-install.md).
+# Write the installer ISO to a whole USB disk (docs/install.md).
 #
 #   tools/write-usb.sh DEVICE
 #

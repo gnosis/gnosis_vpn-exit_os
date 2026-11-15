@@ -3,9 +3,9 @@
 What to hand someone on site when an appliance answers no SSH key any more.
 
 A device installed from a key-configured ISO locks both the root and the `gvpn`
-password ([first-install.md](first-install.md) step 4) and its sshd accepts
-`gvpn` with a key only, so a keyboard and monitor at the device are not a way
-in. Neither is the bastion: it only forwards to the device's sshd. A
+password ([first login](install-unmanaged.md#5-first-login)) and its sshd
+accepts `gvpn` with a key only, so a keyboard and monitor at the device are not
+a way in. Neither is the bastion: it only forwards to the device's sshd. A
 console-configured device, on hardware or in a VM, can be reached on its console
 with the `gvpn` password as long as that password is not locked
 ([first access on the console](local-access.md#first-access-on-the-console)).
@@ -235,15 +235,16 @@ nothing until it is done.
 
 1. Unplug the appliance's power.
 2. Plug the stick into a USB port, preferably a rear one.
-3. Power on and press F7 (**Del** opens the firmware setup) until the boot menu
-   appears, then choose the line that starts with `UEFI:` and the stick's name.
+3. Power on and press the boot menu key (often F7, F11, F12 or Esc; the
+   machine's manual names it) until the boot menu appears, then choose the line
+   that starts with `UEFI:` and the stick's name.
 4. Wait up to two minutes.
 
 ```
 ========================================
  GnosisVPN recovery: SUCCESS
 ========================================
- Device serial: SER8X0000000001
+ Device serial: ABC0000000001
  Keys added: 7
  Support window: until 2026-10-31T09:12:00Z
 ========================================
@@ -296,7 +297,7 @@ Call the support team.
 
 ## Reading the report, as the operator
 
-An unmanaged device ([the setups](first-install.md#choose-your-setup)) has no
+An unmanaged device ([the setups](install.md#choose-your-setup)) has no
 `support.env`: the bastion and support port lines of the report are empty, the
 support window opens no tunnel, and the next step is a login from the device's
 LAN ([local access](local-access.md)). The rest of this section is for devices

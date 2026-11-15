@@ -379,7 +379,7 @@ cmd_finalize() {
 
   echo
   echo "Provisioning record (keep it): the node address has to be on the GnosisVPN"
-  echo "client destination list before clients use this exit (docs/first-install.md)."
+  echo "client destination list before clients use this exit (docs/install.md)."
   checksum_record < "${GVPN_IDENTITY_DIR}/provisioning.json"
   echo
   echo "Device provisioned. Reboot to start the exit node: sudo systemctl reboot"

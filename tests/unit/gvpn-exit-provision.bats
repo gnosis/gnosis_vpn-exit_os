@@ -523,5 +523,5 @@ esac'
   [ "${status}" -eq 0 ]
   [[ "${output}" == *"keep it"* ]]
   [[ "${output}" == *"destination list"* ]]
-  [[ "${output}" == *"docs/first-install.md"* ]]
+  [[ "${output}" == *"docs/install.md"* ]]
 }

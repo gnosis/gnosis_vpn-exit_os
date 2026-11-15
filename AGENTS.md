@@ -1,32 +1,33 @@
 # gvpn-exit-os
 
-GnosisVPN exit-node OS for Beelink SER8 and GEEKOM A8, based on Fedora
+GnosisVPN exit-node OS for x86_64 machines with a TPM 2.0 and for Incus VMs
+([requirements](docs/install.md#hardware-requirements)), based on Fedora
 IoT/bootc. Before changing behaviour, read [architecture](docs/architecture.md),
 [build](docs/build.md) and [roadmap](docs/roadmap.md). Keep docs in sync with
 code. A device is either managed, administered through a support bastion, or
 unmanaged, reached from its LAN only, and runs on hardware or in an Incus VM
-([the setups](docs/first-install.md#choose-your-setup)); the bastion is outside
-this repository ([how to prepare one](docs/bastion.md)); the fleet backend is
-not implemented, part of the [roadmap](docs/roadmap.md#fleet-and-onboarding).
+([the setups](docs/install.md#choose-your-setup)); the bastion is outside this
+repository ([how to prepare one](docs/bastion.md)); the fleet backend is not
+implemented, part of the [roadmap](docs/roadmap.md#fleet-and-onboarding).
 
 ## Layout
 
-| Path                                  | What                                                                                                                                                                                                                         |
-| ------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `image/Containerfile`                 | The OS image. Pins come from `image/versions.env` as build args.                                                                                                                                                             |
-| `image/versions.env`                  | Base image digest, app versions + sha256, netdata version. Bump by PR only.                                                                                                                                                  |
-| `image/rootfs/`                       | Copied into the image: units, drop-ins, scripts, configs; deployment defaults are rendered during the build.                                                                                                                 |
-| `image/rootfs/usr/libexec/gvpn-exit/` | Bash runtime scripts; `lib.sh`, `checks.sh`, `public-ip.sh` are sourced helpers.                                                                                                                                             |
-| `image/rootfs/usr/bin/`               | Operator CLIs: provisioning, support, status, hoprd address refresh and the hoprd v4-to-v5 migration.                                                                                                                        |
-| `image/rootfs/usr/lib/greenboot/`     | Required software checks may trigger rollback; wanted connectivity checks cannot.                                                                                                                                            |
-| `image/build/`                        | Build-time helpers (release download + GPG verify, blocklist snapshot, netdata repo, deployment configuration, OS name).                                                                                                     |
-| `image/bib/`                          | bootc-image-builder configs (installer ISO, QEMU qcow2).                                                                                                                                                                     |
-| `image/recovery/`                     | Recovery stick image: a Unified Kernel Image that adds operator keys to an appliance and opens a support window.                                                                                                             |
-| `keys/`                               | Pinned public keys: HOPR + GnosisVPN release keys and the netdata repo key. The image-update key is operator-specific and comes in as `GVPN_COSIGN_PUB`, never from this repository.                                         |
-| `tools/`                              | Rootful Podman builder (direct or through Docker), host-side installer rendering, disk builds, publishing, recovery sticks and QEMU.                                                                                         |
-| `tests/unit/`                         | bats suites, run against a sandbox with recording command mocks.                                                                                                                                                             |
-| `tests/integration/`                  | SSH checks against an installed VM and a throwaway bastion.                                                                                                                                                                  |
-| `docs/`                               | Design (`architecture.md`, `build.md`, `roadmap.md`), operator runbooks (`first-install.md`, `local-access.md`, `bastion.md`, `publish-image.md`, `recovery.md`, `incus.md`, `hoprd-v5-migration.md`, `switch-registry.md`). |
+| Path                                  | What                                                                                                                                                                                                                                                                 |
+| ------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `image/Containerfile`                 | The OS image. Pins come from `image/versions.env` as build args.                                                                                                                                                                                                     |
+| `image/versions.env`                  | Base image digest, app versions + sha256, netdata version. Bump by PR only.                                                                                                                                                                                          |
+| `image/rootfs/`                       | Copied into the image: units, drop-ins, scripts, configs; deployment defaults are rendered during the build.                                                                                                                                                         |
+| `image/rootfs/usr/libexec/gvpn-exit/` | Bash runtime scripts; `lib.sh`, `checks.sh`, `public-ip.sh` are sourced helpers.                                                                                                                                                                                     |
+| `image/rootfs/usr/bin/`               | Operator CLIs: provisioning, support, status, hoprd address refresh and the hoprd v4-to-v5 migration.                                                                                                                                                                |
+| `image/rootfs/usr/lib/greenboot/`     | Required software checks may trigger rollback; wanted connectivity checks cannot.                                                                                                                                                                                    |
+| `image/build/`                        | Build-time helpers (release download + GPG verify, blocklist snapshot, netdata repo, deployment configuration, OS name).                                                                                                                                             |
+| `image/bib/`                          | bootc-image-builder configs (installer ISO, QEMU qcow2).                                                                                                                                                                                                             |
+| `image/recovery/`                     | Recovery stick image: a Unified Kernel Image that adds operator keys to an appliance and opens a support window.                                                                                                                                                     |
+| `keys/`                               | Pinned public keys: HOPR + GnosisVPN release keys and the netdata repo key. The image-update key is operator-specific and comes in as `GVPN_COSIGN_PUB`, never from this repository.                                                                                 |
+| `tools/`                              | Rootful Podman builder (direct or through Docker), host-side installer rendering, disk builds, publishing, recovery sticks and QEMU.                                                                                                                                 |
+| `tests/unit/`                         | bats suites, run against a sandbox with recording command mocks.                                                                                                                                                                                                     |
+| `tests/integration/`                  | SSH checks against an installed VM and a throwaway bastion.                                                                                                                                                                                                          |
+| `docs/`                               | Design (`architecture.md`, `build.md`, `roadmap.md`), operator runbooks (`install.md`, `install-managed.md`, `install-unmanaged.md`, `local-access.md`, `bastion.md`, `publish-image.md`, `recovery.md`, `incus.md`, `hoprd-v5-migration.md`, `switch-registry.md`). |
 
 ## Commands
 

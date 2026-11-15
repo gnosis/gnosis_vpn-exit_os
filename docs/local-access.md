@@ -1,8 +1,8 @@
 # Local access over SSH
 
 How an operator logs in to a device from its LAN and manages who may. This is
-the only access an [unmanaged device](first-install.md#choose-your-setup) has,
-and it works the same on a managed device, which also has a support bastion, in
+the only access an [unmanaged device](install.md#choose-your-setup) has, and it
+works the same on a managed device, which also has a support bastion, in
 hardware and in a VM.
 
 ## What the device accepts
@@ -30,8 +30,9 @@ device with a [support bastion](bastion.md).
 ## The key in the installer
 
 `GVPN_OPERATOR_SSH_KEY` names the public key file the installer puts into
-`gvpn`'s `authorized_keys` ([first install](first-install.md#build-it-locally)).
-A console-configured ISO has no installer key; add the key shown here on the
+`gvpn`'s `authorized_keys`
+([build it locally](install-unmanaged.md#build-it-locally)). A
+console-configured ISO has no installer key; add the key shown here on the
 device's console instead ([below](#first-access-on-the-console)). Create a pair
 if you have none, and keep the private half:
 
@@ -53,32 +54,35 @@ before you added another key, the way back is the
 ## First access on the console
 
 A console-configured device (installed from the published ISO or one built with
-`just iso-console`) has no SSH key after the install. Its first access is the
-console: a keyboard and monitor (tty1) on hardware, the serial console in an
-Incus VM (`just incus-console`, [Incus VM](incus.md#on-the-console)).
+`just iso-console`) has no SSH key after the install, and its `gvpn` account has
+the temporary password `exit4gvpn`, expired so that the first login must change
+it. Its first access is the console: a keyboard and monitor (tty1) on hardware,
+the serial console in an Incus VM (`just incus-console`,
+[Incus VM](incus.md#on-the-console)).
 
-1. At the `gvpn-exit login:` prompt, log in as `gvpn` with the temporary
-   password `exit4gvpn`. It is expired, so the login asks for a new one; choose
-   it.
-2. Install your public key:
+The install guide walks through getting your key onto such a device
+([first login with a console-configured installer](install-unmanaged.md#with-a-console-configured-installer)):
+change the password on the console, allow SSH passwords for as long as it takes
+to run `ssh-copy-id` from your laptop, then turn password login off and lock the
+password. The image itself never allows SSH passwords; that procedure adds a
+temporary drop-in to `/etc/ssh/sshd_config.d/` and removes it again.
 
-   ```sh
-   install -d -m 700 ~/.ssh
-   cat >> ~/.ssh/authorized_keys <<'EOF'
-   ssh-ed25519 AAAA... you@workstation
-   EOF
-   chmod 600 ~/.ssh/authorized_keys
-   ```
+To keep SSH key-only throughout, type the public key on the console instead,
+after the password change:
 
-3. Read the host key fingerprint for the first SSH connection:
-   `ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub`.
-4. Log in over SSH with your key ([first login](#first-login)).
+```sh
+install -d -m 700 ~/.ssh
+cat >> ~/.ssh/authorized_keys <<'EOF'
+ssh-ed25519 AAAA... you@workstation
+EOF
+chmod 600 ~/.ssh/authorized_keys
+ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub    # the fingerprint for the first SSH login
+```
 
-SSH stays public-key-only, so the password works on the console only. The
-console stays a way in, though: anyone at the keyboard and monitor, or with
-access to the VM console, can log in as `gvpn` with the password chosen at the
-first login, or with `exit4gvpn` until then, and has root through `sudo`. Once
-your key works over SSH, lock the password:
+Either way, the console stays a way in until you lock the password: anyone at
+the keyboard and monitor, or with access to the VM console, can log in as `gvpn`
+with the password chosen at the first login, or with `exit4gvpn` until then, and
+has root through `sudo`. Once your key works over SSH, lock it:
 
 ```sh
 sudo passwd -l gvpn

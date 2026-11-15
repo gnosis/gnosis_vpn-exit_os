@@ -294,7 +294,7 @@ installed system runs in a VM; on hardware the console is the keyboard and
 monitor (tty1).
 
 For a managed device, administered through a support bastion
-([the setups](first-install.md#choose-your-setup)), the ISO also carries the
+([the setups](install.md#choose-your-setup)), the ISO also carries the
 first-access tunnel:
 
 | Variable                   | Value                                                            |
@@ -323,7 +323,8 @@ expired `gvpn` password and no key), locks root's password, sets UTC and the
 hostname `gvpn-exit`, and powers off, so the USB stick comes out before the
 first boot; with the bastion inputs it also writes `/etc/gvpn-exit/support.env`
 and `bastion_known_hosts` (0644) and `enroll.key` (0600). For an install follow
-[first-install.md](first-install.md).
+[install a managed device](install-managed.md) or
+[install an unmanaged device](install-unmanaged.md).
 
 bootc-image-builder titles the installer's menu entries with the image's
 os-release `NAME` and `VERSION_ID` ("Install GnosisVPN ExitOS 44") and has no
@@ -415,7 +416,7 @@ bastion inputs and no SSH key; configure access on the VM console before
 provisioning ([Incus VM](incus.md#on-the-console)). A managed VM uses an ISO
 built with `just iso` and the four bastion inputs ([publishing](#ci)).
 
-### First-install rehearsal
+### QEMU install rehearsal
 
 The rehearsal installs a device with a bastion: a throwaway one on the host
 (`tests/integration/bastion.sh`), which the VM reaches as `10.0.2.2`.

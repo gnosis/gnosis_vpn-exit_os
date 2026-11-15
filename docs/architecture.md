@@ -1,6 +1,7 @@
 # Architecture
 
-Runtime design of the exit appliance (Beelink SER8, GEEKOM A8): Fedora IoT in
+Runtime design of the exit appliance (an x86_64 machine or Incus VM that meets
+the [hardware requirements](install.md#hardware-requirements)): Fedora IoT in
 bootc image mode with `hoprd`, `gnosis_vpn-server` and the device logic in this
 repository. Versions are pinned in `image/versions.env`. Build and test tooling
 is in [build.md](build.md), open work in [roadmap.md](roadmap.md).
@@ -120,7 +121,7 @@ environment for tests.
 
 ## Persistent state
 
-The ISO kickstart pins the NVMe layout: `/boot/efi` 600 MiB vfat, `/boot` 2 GiB
+The ISO kickstart pins the disk layout: `/boot/efi` 600 MiB vfat, `/boot` 2 GiB
 XFS and `/` XFS over the rest of the disk; swap is Fedora's zram. DB snapshots
 use `cp --reflink=always`, so `/` must support reflinks (the XFS default);
 without them a snapshot, and therefore the update, fails. All bootc deployments
@@ -149,7 +150,8 @@ from `bootc status --format=json`).
 ## Provisioning
 
 `sudo gvpn-exit-provision` runs as `gvpn` over LAN SSH or the enrollment tunnel
-([runbook](first-install.md#5-provision)).
+([managed](install-managed.md#6-provision-the-node),
+[unmanaged](install-unmanaged.md#6-provision-the-node)).
 
 1. `identity` requires a TPM2 and refuses to replace an existing identity. It
    creates the hoprd identity, password, API token, WireGuard key and support
@@ -225,10 +227,10 @@ ISO.
 ## Network and firewall
 
 - `10-gvpn-exit-lan0.link` renames the wired Ethernet NIC to `lan0` (any
-  `Type=ether` device: the SER8's and A8's r8169 for the RTL8125, the QEMU
-  test's virtio_net, or another PHY on a board revision) and enables receive
-  packet steering on all CPUs, because r8169 gives the RTL8125 a single receive
-  queue.
+  `Type=ether` device, whatever driver it uses: r8169 for a Realtek RTL8125, the
+  QEMU test's virtio_net, or any other) and enables receive packet steering on
+  all CPUs, because a NIC with a single receive queue, such as the RTL8125 under
+  r8169, would otherwise process all receive work on one CPU.
 - NetworkManager runs DHCP on `lan0` and leaves `wggvpn`, `ifb-gvpn` and Wi-Fi
   devices unmanaged. Intel Wi-Fi and USB Bluetooth drivers are blacklisted.
 - The device is named `gvpn-exit`. The installer writes the name to
@@ -537,9 +539,9 @@ require operator recovery; only mocked unit tests cover interruptions.
 ## Support tunnel
 
 The tunnel exists only on a device whose installer was built with the bastion
-inputs, a managed device ([the setups](first-install.md#choose-your-setup)).
-Both tunnel units require `/etc/gvpn-exit/support.env`, so an unmanaged device
-starts neither, dials nowhere for support and is administered over
+inputs, a managed device ([the setups](install.md#choose-your-setup)). Both
+tunnel units require `/etc/gvpn-exit/support.env`, so an unmanaged device starts
+neither, dials nowhere for support and is administered over
 [LAN SSH](local-access.md) alone; the support window then gates nothing.
 
 `support-tunnel.sh KEY` runs autossh with a reverse forward from `SUPPORT_PORT`

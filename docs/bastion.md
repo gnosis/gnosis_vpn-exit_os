@@ -1,9 +1,9 @@
 # Support bastion
 
 A bastion is for devices that are administered remotely
-([managed setup](first-install.md#choose-your-setup)). A device whose operator
-only works on it from its LAN needs none: build its installer without the
-bastion inputs and read [local access](local-access.md) instead.
+([managed setup](install.md#choose-your-setup)). A device whose operator only
+works on it from its LAN needs none: build its installer without the bastion
+inputs and read [local access](local-access.md) instead.
 
 The device dials out; nothing on the appliance network has to accept an inbound
 connection. Each appliance keeps a reverse SSH tunnel to a bastion you operate,
@@ -19,7 +19,7 @@ follows.
 ## What the device needs from you
 
 For every appliance, before you build its installer
-([first install](first-install.md#1-prepare-the-bastion)):
+([first install](install-managed.md#1-prepare-the-bastion)):
 
 | Input                      | What it is                                                                                                             |
 | -------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
@@ -120,7 +120,8 @@ printf '[bastion.example.org]:2222 %s\n' \
    ([operators' keys](#operators-keys)). Without them the device is reachable
    only through the enrollment key that `finalize` deletes.
 5. Build the ISO with that private key, the port, the bastion address and the
-   known_hosts file ([first install](first-install.md#build-it-locally)).
+   known_hosts file
+   ([build the installer](install-managed.md#3-build-the-installer)).
 
 Provisioning creates a second, TPM-sealed support key and prints its public
 half. Admit it with the same restriction and the same port, then follow the
@@ -191,4 +192,4 @@ host's loopback (port 2200): a per-device key with the same `permitlisten` and
 `permitopen` restriction as above, on a much looser server configuration (your
 own user, `StrictModes no`, no separate account). `bastion.sh env` prints the
 four inputs for `just iso`. It is what the QEMU walkthrough in
-[build.md](build.md#first-install-rehearsal) uses.
+[build.md](build.md#qemu-install-rehearsal) uses.

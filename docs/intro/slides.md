@@ -27,7 +27,7 @@ style: |
 
 ### Developer onboarding
 
-The exit-node appliance OS for the Beelink SER8 and GEEKOM A8
+The exit-node appliance OS for x86_64 machines and Incus VMs
 
 <!--
 Speaker notes live in HTML comments like this one. Marp shows them in
@@ -149,7 +149,7 @@ All artifacts land in the git-ignored `output/`.
 
 ```text
 image/versions.env ─┐
-keys/*.asc ─────────┼─► Containerfile ─► localhost/gvpn-exit-os:dev ─┬─► just iso   ─► USB ─► NVMe
+keys/*.asc ─────────┼─► Containerfile ─► localhost/gvpn-exit-os:dev ─┬─► just iso   ─► USB ─► disk
 image/rootfs/ ──────┘    (gpgv-verified    (smoke tests,              ├─► just qcow2
                           releases)         bootc container lint)     └─► just push / publish
                                                                             │  cosign-signed
@@ -543,7 +543,8 @@ Good first issues often live here. Pick one, write the failing test, open a PR.
 4. On a Linux box: build an ISO, run the QEMU rehearsal through `provisioned`.
 5. SSH into the VM and run `sudo gvpn-exit-status`; follow one unit with
    `systemctl cat`.
-6. Walk through [`first-install.md`](../first-install.md) and
+6. Walk through [`install-unmanaged.md`](../install-unmanaged.md) or
+   [`install-managed.md`](../install-managed.md) and
    [`publish-image.md`](../publish-image.md) against your own bench and
    registry.
 7. Pick a small gap from the roadmap and ship it through the PR flow.
@@ -557,5 +558,6 @@ Good first issues often live here. Pick one, write the failing test, open a PR.
 
 `nix develop -c just test`
 
-docs: `architecture.md` · `build.md` · `roadmap.md` · `first-install.md` ·
-`publish-image.md` · `recovery.md` · `incus.md`
+docs: `architecture.md` · `build.md` · `roadmap.md` · `install.md` ·
+`install-managed.md` · `install-unmanaged.md` · `publish-image.md` ·
+`recovery.md` · `incus.md`

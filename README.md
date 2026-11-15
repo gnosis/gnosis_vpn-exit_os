@@ -1,12 +1,12 @@
 # Gnosis VPN ExitOS
 
-GnosisVPN exit-node OS for the Beelink SER8 and GEEKOM A8: Fedora IoT (bootc)
+GnosisVPN exit-node OS for x86_64 machines and Incus VMs: Fedora IoT (bootc)
 running `hoprd` and `gnosis_vpn-server`, with private-range isolation, per-peer
 traffic shaping sized from a boot-time uplink measurement, an IP blocklist,
 TPM-sealed credentials, signed image updates and greenboot rollback.
 
 A device is set up by two independent choices
-([which ones](docs/first-install.md#choose-your-setup)); every combination is
+([which ones](docs/install.md#choose-your-setup)); every combination is
 supported:
 
 - Management, chosen when its installer is built:
@@ -16,31 +16,37 @@ supported:
   - **Unmanaged**: installed by the operator who runs it, and reached over SSH
     from its LAN only. No bastion and no support tunnel are involved.
 - Target:
-  - **Hardware**: a Beelink SER8 or GEEKOM A8, installed from a USB stick.
+  - **Hardware**: an x86_64 machine with UEFI, a TPM 2.0, one internal disk, at
+    least 8 CPU cores, 16 GiB RAM and one wired NIC, ideally 1 Gbit/s or faster
+    ([requirements](docs/install.md#hardware-requirements)), installed from a
+    USB stick.
   - **VM**: an Incus VM sized with at least 8 vCPUs and 16 GiB RAM
     ([Incus VM](docs/incus.md)).
 
-CI publishes a ready-to-install ISO on every merge, so an operator does not have
-to build one. It is unmanaged, serves hardware and VMs, and has no SSH key:
+Every promotion of an image to `canary` or `stable` publishes a ready-to-install
+ISO for that channel, so an operator of an unmanaged device does not have to
+build one. It is unmanaged, serves hardware and VMs, and has no SSH key:
 configure access on the console (keyboard and monitor, or the VM console) with
 your own key before provisioning
-([first access on the console](docs/local-access.md#first-access-on-the-console)).
+([first login](docs/install-unmanaged.md#5-first-login)).
 
-| Task                                      | Read                                         |
-| ----------------------------------------- | -------------------------------------------- |
-| Get onboarded as a developer              | [Intro deck](docs/intro/README.md)           |
-| Install, provision and connect over SSH   | [First install](docs/first-install.md)       |
-| Log in from the LAN and manage SSH keys   | [Local access](docs/local-access.md)         |
-| Prepare a support bastion (managed setup) | [Bastion](docs/bastion.md)                   |
-| Build and test locally or in QEMU         | [Build system](docs/build.md)                |
-| Install the ISO into an Incus VM          | [Incus VM](docs/incus.md)                    |
-| Publish a canary update                   | [Publish runbook](docs/publish-image.md)     |
-| Move an installed v4 node to v5           | [hoprd v4 to v5](docs/hoprd-v5-migration.md) |
-| Move a device to another image repository | [Switch registry](docs/switch-registry.md)   |
-| Get back into a device that lost its keys | [Recovery stick](docs/recovery.md)           |
-| Understand runtime behaviour              | [Architecture](docs/architecture.md)         |
-| Check gaps and planned work               | [Roadmap](docs/roadmap.md)                   |
-| Change this repository                    | [Contributor guidance](AGENTS.md)            |
+| Task                                      | Read                                           |
+| ----------------------------------------- | ---------------------------------------------- |
+| Get onboarded as a developer              | [Intro deck](docs/intro/README.md)             |
+| Choose a setup and what an install needs  | [Install a device](docs/install.md)            |
+| Install a device administered remotely    | [Managed install](docs/install-managed.md)     |
+| Install a device reached from its LAN     | [Unmanaged install](docs/install-unmanaged.md) |
+| Log in from the LAN and manage SSH keys   | [Local access](docs/local-access.md)           |
+| Prepare a support bastion (managed setup) | [Bastion](docs/bastion.md)                     |
+| Build and test locally or in QEMU         | [Build system](docs/build.md)                  |
+| Install the ISO into an Incus VM          | [Incus VM](docs/incus.md)                      |
+| Publish a canary update                   | [Publish runbook](docs/publish-image.md)       |
+| Move an installed v4 node to v5           | [hoprd v4 to v5](docs/hoprd-v5-migration.md)   |
+| Move a device to another image repository | [Switch registry](docs/switch-registry.md)     |
+| Get back into a device that lost its keys | [Recovery stick](docs/recovery.md)             |
+| Understand runtime behaviour              | [Architecture](docs/architecture.md)           |
+| Check gaps and planned work               | [Roadmap](docs/roadmap.md)                     |
+| Change this repository                    | [Contributor guidance](AGENTS.md)              |
 
 ```sh
 nix develop -c just test  # shellcheck + unit tests; no image build or VM

@@ -1,28 +1,29 @@
 # Run the appliance in an Incus VM
 
-An Incus VM is the VM target of the
-[first install](first-install.md#choose-your-setup): an alternative to a SER8 or
-A8, not only a test harness. The guest runs the same image from the same
-installer ISO, with the same provisioning, checks and services, managed or
-unmanaged; Incus supplies the UEFI firmware, the TPM and the disk. Sized as
-recommended, the VM is intended to serve clients with the same capacity as a
-dedicated appliance. Follow [first-install.md](first-install.md) for the
-runbook; this page covers what the VM changes. Acceptance still follows
-[the acceptance gate](first-install.md#7-acceptance-gate).
+An Incus VM is the VM target of an [install](install.md#choose-your-setup): an
+alternative to dedicated hardware, not only a test harness. The guest runs the
+same image from the same installer ISO, with the same provisioning, checks and
+services, managed or unmanaged; Incus supplies the UEFI firmware, the TPM and
+the disk. Sized as recommended, the VM is intended to serve clients with the
+same capacity as a dedicated appliance. Follow
+[install a managed device](install-managed.md) or
+[install an unmanaged device](install-unmanaged.md) for the runbook; this page
+covers what the VM changes. Acceptance still follows
+[the acceptance gate](install.md#acceptance-gate).
 
 ## What differs from hardware
 
 |                  | Hardware                                                                                       | Incus VM                                                                                                        |
 | ---------------- | ---------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
-| Install disk     | The internal NVMe disk, picked by the installer                                                | The root disk, `/dev/sda` (Incus' default virtio-scsi), picked by the installer                                 |
+| Install disk     | The only internal disk, picked by the installer                                                | The root disk, `/dev/sda` (Incus' default virtio-scsi), picked by the installer                                 |
 | Installer media  | A USB stick (`just usb`)                                                                       | A disk device Incus attaches (`just incus-install`)                                                             |
 | Firmware         | UEFI, Secure Boot off                                                                          | UEFI, Secure Boot off (`incus` sets `security.secureboot=false`; the installer ISO is not signed)               |
-| TPM              | firmware fTPM                                                                                  | Incus vTPM device `tpm`; provisioning seals into it                                                             |
-| Network          | 2.5GbE port, DHCP LAN                                                                          | virtio NIC, DHCP on an Incus bridge; the image still renames it `lan0`                                          |
+| TPM              | a firmware or discrete TPM 2.0                                                                 | Incus vTPM device `tpm`; provisioning seals into it                                                             |
+| Network          | one wired Ethernet port, ideally 1 Gbit/s or faster, DHCP LAN                                  | virtio NIC, DHCP on an Incus bridge; the image still renames it `lan0`                                          |
 | SSH source       | an RFC1918 LAN address                                                                         | the bridge address (keep the bridge's IPv4 range RFC1918)                                                       |
 | Console          | keyboard and monitor (tty1)                                                                    | the serial console (`just incus-console`); a console-configured installer enables the serial getty only in a VM |
 | First access     | the installer's SSH key, or the console for a console-configured ISO; the bastion when managed | the same                                                                                                        |
-| Resources        | CPU, RAM and NVMe of the appliance                                                             | **at least 8 vCPUs, 16 GiB RAM** and a 64 GiB disk; size the host so the guest keeps them                       |
+| Resources        | **at least 8 CPU cores, 16 GiB RAM** and one internal disk                                     | **at least 8 vCPUs, 16 GiB RAM** and a 64 GiB disk; size the host so the guest keeps them                       |
 | Power/CPU policy | firmware Always On, performance mode                                                           | supplied by the host; a VM often exposes no cpufreq policy, so `gvpn-exit-status` reports the governor as `n/a` |
 
 The VM is an appliance workload on a virtual host: it has no Always On firmware
@@ -58,10 +59,11 @@ On a Linux host with KVM:
   `networking.firewall.trustedInterfaces = [ "incusbr0" ];`.
 
 - The inputs for the installer you use
-  ([getting the installer](first-install.md#3-get-the-installer)):
-  `GVPN_IMAGE_REPO` and `GVPN_COSIGN_PUB` in every case; for a key-configured
-  build also `GVPN_OPERATOR_SSH_KEY`, whose private half you keep for
-  `VM_SSH_KEY`; for a managed build also the four bastion inputs.
+  ([managed](install-managed.md#3-build-the-installer),
+  [unmanaged](install-unmanaged.md#2-get-the-installer)): `GVPN_IMAGE_REPO` and
+  `GVPN_COSIGN_PUB` in every case; for a key-configured build also
+  `GVPN_OPERATOR_SSH_KEY`, whose private half you keep for `VM_SSH_KEY`; for a
+  managed build also the four bastion inputs.
 
 Run the commands in the devshell, like every other recipe. The `incus` commands
 themselves are taken from the host `PATH`.
@@ -86,7 +88,7 @@ and its target) into `output/published-iso/`; to inspect the download first, run
 `just incus-install output/published-iso/install.iso`. The reference is
 `stable`, `canary` or a `VERSION-CHANNEL`, and the VM follows the channel of its
 ISO for its updates
-([the published ISO](first-install.md#pull-the-published-iso)).
+([the published ISO](install-unmanaged.md#pull-the-published-iso)).
 
 `incus-install` creates the VM `gvpn-exit`, adds a vTPM and a second disk for
 the ISO, and boots the installer on the console. The default VM has the
@@ -145,17 +147,19 @@ nix develop -c just incus-console
 ```
 
 The getty printed its login prompt at boot, before you attached, so the console
-stays blank until you press Enter. Log in as `gvpn` with `exit4gvpn`, choose a
-new password and install your public key as
-[local access](local-access.md#first-access-on-the-console) describes, then
-leave the console with `Ctrl-a q` and continue with `just incus-ssh` as above.
-Anyone with access to the VM console can log in with that password; lock it with
-`sudo passwd -l gvpn` once your key works.
+stays blank until you press Enter. Then follow
+[first login with a console-configured installer](install-unmanaged.md#with-a-console-configured-installer):
+change the `exit4gvpn` password on this console, allow SSH passwords for a
+moment, copy your key over from the Incus host, and turn password login off and
+lock the password again. Leave the console with `Ctrl-a q` and continue with
+`just incus-ssh` as above. Until the password is locked, anyone with access to
+the VM console can log in with it and has root through `sudo`.
 
 ## Provision and check
 
 The provisioning and check steps are the same as on hardware
-([first-install.md](first-install.md#5-provision)), just over SSH:
+([managed](install-managed.md#6-provision-the-node),
+[unmanaged](install-unmanaged.md#6-provision-the-node)), just over SSH:
 
 ```sh
 nix develop -c just incus-ssh sudo gvpn-exit-provision identity
@@ -196,11 +200,11 @@ that).
 
 A managed VM is installed like managed hardware: build its per-device ISO with
 the four bastion inputs and `just iso`
-([build it locally](first-install.md#build-it-locally)), then install that file
-with `just incus-install output/iso/bootiso/install.iso`. The bastion must be
-reachable from the guest. After provisioning, reach the VM through the bastion
-as [bastion.md](bastion.md#reaching-a-device) shows, with operator keys admitted
-as described in [bastion.md](bastion.md#operators-keys).
+([build the installer](install-managed.md#3-build-the-installer)), then install
+that file with `just incus-install output/iso/bootiso/install.iso`. The bastion
+must be reachable from the guest. After provisioning, reach the VM through the
+bastion as [bastion.md](bastion.md#reaching-a-device) shows, with operator keys
+admitted as described in [bastion.md](bastion.md#operators-keys).
 
 ### Rehearsal with the throwaway bastion
 

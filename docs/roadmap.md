@@ -99,10 +99,10 @@ passes end to end yet.
 - TPM loss: a TPM clear, fTPM reset or board replacement loses the sealed
   identity. Write a re-identity runbook (new identity, Safe module, HOPR
   listing) and decide between re-provisioning and escrow.
-- [Acceptance gate](first-install.md#7-acceptance-gate) tooling: bench
-  acceptance covering greenboot, Blokli sync, server ping, funded on-chain
-  address, a client session and a blocklist smoke test, including an uplink
-  without public address or UPnP. Write the verifier in this repository.
+- [Acceptance gate](install.md#acceptance-gate) tooling: bench acceptance
+  covering greenboot, Blokli sync, server ping, funded on-chain address, a
+  client session and a blocklist smoke test, including an uplink without public
+  address or UPnP. Write the verifier in this repository.
 - Signed support-window authorization instead of a root-written timestamp.
 - Release notes describing DB migrations, the v4-to-v5 Safe/channel migration
   and the accepted rollback ticket loss.
@@ -125,9 +125,9 @@ passes end to end yet.
 - netdata: authenticated hoprd metrics and a go.d WireGuard job.
 - Evaluate two-server STUN discovery next to the HTTPS and router observations;
   NAT classification still needs real client acceptance.
-- Hardware ISO acceptance on both models: deployment `/etc` enrollment files,
-  modes, SELinux labels, first-boot tunnel and the pinned disk layout with `/`
-  spanning the disk.
+- Hardware ISO acceptance on physical machines: deployment `/etc` enrollment
+  files, modes, SELinux labels, first-boot tunnel and the pinned disk layout
+  with `/` spanning the disk.
 - Explicit persistent journald storage with a size cap; base defaults apply
   today.
 
@@ -141,7 +141,7 @@ passes end to end yet.
   firewall and NAT traversal separately.
 - Pinned gnosis_vpn-server: confirm writes to its tmpfs WireGuard configuration
   and the serve and config options it takes.
-- Record the firmware menu paths for both models, including Always On.
+- Record firmware menu paths for the machines in use, including Always On.
 
 ## Documentation
 
@@ -161,7 +161,8 @@ passes end to end yet.
 
 ## Phase 2
 
-- Secure Boot with custom keys; verify each model's enrollment state.
+- Secure Boot with custom keys; verify the enrollment state on the machines in
+  use.
 - TPM2-bound LUKS root and an installation flow for it.
 - LAN status page for the site's own staff.
 - Optional netdata drop-in binding the LAN address (off by default).

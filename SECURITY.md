@@ -6,7 +6,7 @@ This project is under development. Security fixes target the latest code on the
 default branch; older revisions and deployed images have no guaranteed security
 maintenance. Publication does not imply production readiness. See the
 [roadmap](docs/roadmap.md) and
-[acceptance gate](docs/first-install.md#7-acceptance-gate) for acceptance gaps.
+[acceptance gate](docs/install.md#acceptance-gate) for acceptance gaps.
 
 ## Reporting a vulnerability
 

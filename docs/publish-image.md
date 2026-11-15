@@ -131,7 +131,7 @@ against `GVPN_COSIGN_PUB`, and checks the image channel the same way, before it
 moves that channel in the ISO repository. Pulling with `just pull-iso canary`
 (or `stable`, or a `<version>-<channel>`) verifies the signature and the
 checksums of the ISO, its version and its target before it prints the local
-path; see [first install](first-install.md#pull-the-published-iso) and
+path; see [first install](install-unmanaged.md#pull-the-published-iso) and
 [what is verified](build.md#disk-images).
 
 An ISO published before the target recorded its channel, under a bare
@@ -235,4 +235,4 @@ sudo journalctl -b -1 -u gvpn-exit-update-apply.service   # or ...-apply-now.ser
 greenboot's journal before publishing again; the device skips that digest while
 it is among its last 10 rejections. Saved public-address settings survive
 updates. Neither greenboot nor `gvpn-exit-status` proves funded-node or client
-acceptance ([acceptance gate](first-install.md#7-acceptance-gate)).
+acceptance ([acceptance gate](install.md#acceptance-gate)).
