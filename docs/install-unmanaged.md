@@ -34,6 +34,10 @@ installing it again.
 - The inputs from the HOPR / GnosisVPN side: a Blokli URL, a way to create and
   fund a Safe and module, and a contact to list the node address
   ([what you need](install.md#what-you-need-from-the-hopr--gnosisvpn-side)).
+- A secure operator environment apart from the device: a Linux machine (x86_64
+  or aarch64) for `hopli`, and the private key that becomes the Safe owner, with
+  xDai and wxHOPR on Gnosis Chain for the Safe, the node and the registration in
+  step 8.
 - _Hardware only:_ a machine that meets the
   [hardware requirements](install.md#hardware-requirements), a USB stick, and a
   keyboard and monitor if the installer is console-configured (the published
@@ -407,9 +411,29 @@ operator tools print), peer id and a support public key, which nothing uses for
 access on an unmanaged device. `sudo gvpn-exit-status` now shows
 `identity created, not finalized`. Then:
 
-1. From a secure operator environment, create and fund the Safe and module for
-   the node address with the matching `hopli` release (see `image/versions.env`)
-   or hub.hoprnet.org. Never put an admin key on the appliance.
+1. From the secure operator environment, create and fund the Safe and module for
+   the node address with `hopli`, in the release `image/versions.env` pins
+   (`HOPLI_VERSION`; the release assets are signed with
+   `keys/hoprnet-release.asc`), or at hub.hoprnet.org. Never put an admin key on
+   the appliance. The key that sends the command becomes the only owner of the
+   Safe and pays for its deployment and its funding:
+
+   ```sh
+   read -rs PRIVATE_KEY && export PRIVATE_KEY   # the Safe owner key; hopli reads PRIVATE_KEY
+   hopli safe-module create \
+     --network piz-palu-prod \
+     --provider-url https://rpc.gnosischain.com \
+     --node-address 0xNODE \
+     --hopr-amount WXHOPR --native-amount XDAI
+   ```
+
+   `0xNODE` is the node address `identity` printed; the identity itself stays
+   sealed to the device. `--hopr-amount` moves wxHOPR from the owner key into
+   the Safe, for the node's channels and the registration in step 8;
+   `--native-amount` sends xDai to the node, which pays for its own
+   transactions. Any Gnosis Chain RPC endpoint serves as `--provider-url`. The
+   command prints `safe 0x...` and `node_module 0x...`, the two addresses for
+   `finalize`.
 2. On the device, finalize with the real addresses (`0x` plus 40 hex digits) and
    reboot:
 
@@ -434,9 +458,7 @@ After the reboot:
 
 - log in from the LAN as before;
 - store the printed provisioning record in your own records;
-- hand the node address to the Gnosis VPN project through support@gnosisvpn.com
-  so it is added to the client destination list. Clients need no override; they
-  use the session targets built into them.
+- check the device (step 7), then register it as an exit (step 8).
 
 ## 7. Check the device
 
@@ -485,7 +507,54 @@ ssh -L 19999:127.0.0.1:19999 gvpn@DEVICE_IP   # then open http://127.0.0.1:19999
 A green `gvpn-exit-status` does not show that clients can use the exit: check
 the device against the [acceptance gate](install.md#acceptance-gate).
 
-## 8. Keep the public address current
+## 8. Register the exit
+
+GnosisVPN clients find exits in the HOPR service registry, under the service
+type `gvpn:exit`. Register the node there with `hopli`, from the operator
+environment and with the Safe owner key of step 6. The registry accepts the
+entry only from the Safe the node is bound to, and hoprd binds the node to its
+Safe when it first starts provisioned. Register once `gvpn-exit-status` reports
+hoprd health `ok`; before that, `hopli` stops with
+`node ... is not bound to a safe in the node-safe registry`.
+
+Registering burns the registration fee of the type in wxHOPR from the Safe (1000
+wxHOPR in November 2026; an update burns 100). `hopli` approves exactly that
+amount in the same Safe transaction, so the Safe has to hold it on top of what
+the node's channels use.
+
+```sh
+cat > gvpn-exit.json <<'EOF'
+{"version":1,"gnosis_vpn_server":"172.30.0.1:8000","wireguard_server":"172.30.0.1:51820","meta":{"name":"GVPN-DE-1","location":"Berlin","flag":"DE"}}
+EOF
+read -rs PRIVATE_KEY && export PRIVATE_KEY   # the Safe owner key, unless still set
+hopli service register \
+  --network piz-palu-prod \
+  --provider-url https://rpc.gnosischain.com \
+  --service-type gvpn:exit \
+  --node-address 0xNODE \
+  --metadata-file gvpn-exit.json
+hopli service get \
+  --network piz-palu-prod \
+  --provider-url https://rpc.gnosischain.com \
+  --service-type gvpn:exit \
+  --node-address 0xNODE      # logs "Service entry" with the metadata in hex
+```
+
+Keep `version`, `gnosis_vpn_server` and `wireguard_server` exactly as shown:
+they are the session targets every device serves
+([overview](architecture.md#overview)), and a client skips an entry whose
+metadata lacks one of them or has another `version`. `meta` holds free labels
+that clients show: a name for the exit, its location and the two-letter country
+code. Change them later with `hopli service update` (the same flags; it burns
+the update fee). `hopli service deregister` removes the entry and is free;
+deregister before you retire the device.
+
+Also hand the node address to the Gnosis VPN project through
+support@gnosisvpn.com, so it is added to the client destination list for clients
+that do not read the registry. Clients need no override; they use the session
+targets built into them.
+
+## 9. Keep the public address current
 
 The first provisioned boot discovers the public IPv4 once and enables
 announcement ([details](architecture.md#reachability)). After moving the device
