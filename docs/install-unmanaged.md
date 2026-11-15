@@ -77,6 +77,26 @@ disk pinned.
 
 ### Pull the published ISO
 
+The GnosisVPN project publishes its installer in
+`europe-west3-docker.pkg.dev/gnosisvpn-production/iso-images/gnosis-vpn-exit-os`;
+install the ISO under its `stable` tag. A device installed from it follows
+`europe-west3-docker.pkg.dev/gnosisvpn-production/docker-images/gnosis-vpn-exit-os:stable`
+for its updates and accepts only images signed with the GnosisVPN image-update
+key. Save the public half of that key on the machine that pulls the ISO; both
+ways of pulling below verify the ISO against it:
+
+```sh
+cat > gnosisvpn-cosign.pub <<'EOF'
+-----BEGIN PUBLIC KEY-----
+MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEmD2CqOQvacCaaSxQZskffjsZgQ3P
+QoheEHjrWfYVi+BdGYobwq1jbKshqGkLzLskmMk9FJyvI71Xoprskp2P1g==
+-----END PUBLIC KEY-----
+EOF
+```
+
+To install the ISO of another publisher, use their repository and their public
+key instead of these two.
+
 Every promotion of an image version to a channel builds the installer of that
 channel and publishes it as a signed OCI artifact in a repository of its own
 (`GVPN_ISO_REPO`), under the immutable `<version>-<channel>` tag and the moving
@@ -97,9 +117,8 @@ downgrade. Install the ISO a channel tag points at unless you mean otherwise.
 With this repository, on any machine with Nix:
 
 ```sh
-export GVPN_IMAGE_REPO='registry.example.org/fleet/gvpn-exit-os'
-export GVPN_ISO_REPO='registry.example.org/fleet/gvpn-exit-os-iso'
-export GVPN_COSIGN_PUB='/secure/path/cosign.pub'
+export GVPN_ISO_REPO='europe-west3-docker.pkg.dev/gnosisvpn-production/iso-images/gnosis-vpn-exit-os'
+export GVPN_COSIGN_PUB="$PWD/gnosisvpn-cosign.pub"
 nix develop -c just pull-iso stable    # or canary, or VERSION-CHANNEL
 ```
 
@@ -108,8 +127,9 @@ signature against `GVPN_COSIGN_PUB` and the checksums of the ISO, its version
 and its target, and prints the path of `install.iso`. The channel is checked
 against the signed channel of the artifact, and a `VERSION-CHANNEL` also against
 its signed version; under a channel tag the version is whatever signed ISO of
-that channel the tag points at. The registry must allow anonymous pulls (as it
-does for image updates) or accept your registry login.
+that channel the tag points at. The GnosisVPN registry serves anonymous pulls;
+the registry of another publisher must do the same (as it does for image
+updates) or accept your registry login.
 
 Without this repository or `oras`, `curl`, `jq`, `openssl` and `sha256sum` do
 the same. Each file of the artifact is a layer named after it. The signature in
@@ -120,8 +140,8 @@ serve anonymous pulls without a token, as Google Artifact Registry does for a
 public repository.
 
 ```sh
-REPO='registry.example.org/fleet/gvpn-exit-os-iso'  # GVPN_ISO_REPO
-TAG='stable'                                        # or canary, or VERSION-CHANNEL
+REPO='europe-west3-docker.pkg.dev/gnosisvpn-production/iso-images/gnosis-vpn-exit-os'
+TAG='stable'    # or canary, or VERSION-CHANNEL
 H="https://${REPO%%/*}" N="${REPO#*/}"
 curl -fsS -H 'Accept: application/vnd.oci.image.manifest.v1+json' \
   "${H}/v2/${N}/manifests/${TAG}" > manifest.json
@@ -134,7 +154,7 @@ done
 
 # the signature on the checksum file, against the image-update public key
 jq -r .messageSignature.signature install.iso.sha256.sigstore.json | base64 -d > install.iso.sha256.sig
-openssl dgst -sha256 -verify /secure/path/cosign.pub -signature install.iso.sha256.sig install.iso.sha256
+openssl dgst -sha256 -verify gnosisvpn-cosign.pub -signature install.iso.sha256.sig install.iso.sha256
 # the signed list names exactly the ISO and both sidecars, and they match it
 awk '{ print $2 }' install.iso.sha256 | sort | paste -sd' '   # install.iso install.iso.target install.iso.version
 sha256sum -c --strict install.iso.sha256
@@ -200,7 +220,7 @@ _VM only._ There is no stick. On the Incus host
 ([creating the VM](incus.md#create-the-vm)):
 
 ```sh
-nix develop -c just incus-install-published stable   # pulls and verifies the published ISO
+nix develop -c just incus-install-published stable   # pulls and verifies the published ISO (GVPN_ISO_REPO, GVPN_COSIGN_PUB as above)
 nix develop -c just incus-install ISO                # an ISO you built or pulled
 nix develop -c just incus-install                    # builds a key-configured ISO first
 ```
