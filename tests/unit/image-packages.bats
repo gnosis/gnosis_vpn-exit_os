@@ -1,6 +1,6 @@
 #!/usr/bin/env bats
 # The image's package set: Fedora's updates are applied when the image is
-# built.
+# built, and the unused CNI plugins are removed.
 
 load helpers
 
@@ -18,4 +18,8 @@ os_stage() {
   [ -n "${upgrade}" ]
   [ -n "${install}" ]
   (( upgrade < install ))
+}
+
+@test "the CNI plugins are removed" {
+  os_stage | grep -E 'dnf -y remove( [a-z-]+)* containernetworking-plugins( |$)'
 }
