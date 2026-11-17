@@ -122,6 +122,6 @@ Tooling for this gate is [open work](roadmap.md#fleet-and-onboarding).
 | Reach a managed device through the bastion   | [Bastion](bastion.md#reaching-a-device)         |
 | Get back into a device that lost its keys    | [Recovery stick](recovery.md)                   |
 | Update devices                               | [Publish and promote](publish-image.md)         |
-| Move a device to another image repository    | [Switch registry](switch-registry.md)           |
+| Move a device to the production repository   | [Switch registry](switch-registry.md)           |
 | Move a device from hoprd v4 to v5            | [hoprd v4 to v5](hoprd-v5-migration.md)         |
 | Rehearse an installation in QEMU             | [Build system](build.md#qemu-install-rehearsal) |
