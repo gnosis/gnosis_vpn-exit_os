@@ -1,0 +1,11 @@
+# Bumps the commit-pinned actions in .github/workflows. Every bump arrives as a
+# PR, so a new action commit runs next to the signing key only after review.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns: ["*"]
