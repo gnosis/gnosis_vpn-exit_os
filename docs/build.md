@@ -18,17 +18,17 @@ host's Incus installation, which is Linux-only and not part of the devshell
 
 ## Sources of truth
 
-| Source                                                                                       | Owns                                                                                                                                                |
-| -------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
-| [`justfile`](../justfile)                                                                    | Commands, image tag, default channel and SSH key path                                                                                               |
-| [`flake.nix`](../flake.nix), [`flake.lock`](../flake.lock)                                   | Devshell tools                                                                                                                                      |
-| [`image/versions.env`](../image/versions.env)                                                | Base image digest, application versions and hashes, netdata version; bump by reviewed PR                                                            |
-| [`image/Containerfile`](../image/Containerfile), [`image/build/`](../image/build/)           | Release download and verification, Fedora updates and packages, blocklist snapshot, deployment config, OS name, smoke tests, `bootc container lint` |
-| [`image/rootfs/`](../image/rootfs/)                                                          | Files copied into the OS                                                                                                                            |
-| [`keys/`](../keys/)                                                                          | Public keys only: release signing keys and the netdata repo key. The image-update key is an operator input, not a repository file.                  |
-| [`image/bib/`](../image/bib/), [`tools/render-bib-config.sh`](../tools/render-bib-config.sh) | Installer and qcow2 templates, per-device input validation                                                                                          |
-| [`tools/`](../tools/)                                                                        | Builder, disk builds, publishing, QEMU harness                                                                                                      |
-| [`tests/unit/`](../tests/unit/), [`tests/integration/`](../tests/integration/)               | Tests                                                                                                                                               |
+| Source                                                                                       | Owns                                                                                                                                                                       |
+| -------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [`justfile`](../justfile)                                                                    | Commands, image tag, default channel and SSH key path                                                                                                                      |
+| [`flake.nix`](../flake.nix), [`flake.lock`](../flake.lock)                                   | Devshell tools                                                                                                                                                             |
+| [`image/versions.env`](../image/versions.env)                                                | Base image digest, application versions and hashes, netdata version, node_exporter source package; bump by reviewed PR                                                     |
+| [`image/Containerfile`](../image/Containerfile), [`image/build/`](../image/build/)           | Release download and verification, Fedora updates and packages, node_exporter rebuild, blocklist snapshot, deployment config, OS name, smoke tests, `bootc container lint` |
+| [`image/rootfs/`](../image/rootfs/)                                                          | Files copied into the OS                                                                                                                                                   |
+| [`keys/`](../keys/)                                                                          | Public keys only: release signing keys and the netdata repo key. The image-update key is an operator input, not a repository file.                                         |
+| [`image/bib/`](../image/bib/), [`tools/render-bib-config.sh`](../tools/render-bib-config.sh) | Installer and qcow2 templates, per-device input validation                                                                                                                 |
+| [`tools/`](../tools/)                                                                        | Builder, disk builds, publishing, QEMU harness                                                                                                                             |
+| [`tests/unit/`](../tests/unit/), [`tests/integration/`](../tests/integration/)               | Tests                                                                                                                                                                      |
 
 The build context contains only `image/` and `keys/` (`.containerignore`), so
 never put a private key under `keys/`.
@@ -272,6 +272,10 @@ fork.
   build, and the image also supplies the Curvy proving artifacts under
   `/usr/share/gvpn-exit/curvy-zk`. netdata is version-pinned from its repository
   with package and metadata GPG checks.
+- node_exporter is Fedora's node-exporter source package, sha256-pinned and
+  rebuilt in the build with the golang Fedora ships at that time, because a Go
+  binary keeps the standard library of the toolchain it was built with and
+  Fedora's binary package lags behind Go's fixes.
 - The build upgrades the base image's packages to Fedora's current updates, and
   the other RPMs and the blocklist snapshot come from live sources as well, so
   builds are not byte-reproducible: the base digest fixes where a build starts,
