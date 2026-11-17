@@ -180,6 +180,20 @@ esac"
   [ ! -e "${GVPN_IDENTITY_DIR}/provisioned" ]
 }
 
+@test "finalize refuses a multi-line location and writes nothing" {
+  "${CLI}" identity
+  local before location
+  before="$(tree_state)"
+  for location in $'Berlin, DE\n' $'Berlin\tDE' $'Berlin, DE\r'; do
+    run "${CLI}" finalize --safe-address "${SAFE}" --module-address "${MODULE}" \
+      --blokli-url https://blokli-test.example.org --location "${location}"
+    [ "${status}" -ne 0 ] || { echo "accepted '${location}'"; false; }
+  done
+  [ ! -e "${GVPN_IDENTITY_DIR}/provisioning.json" ]
+  [ ! -e "${GVPN_IDENTITY_DIR}/provisioned" ]
+  [ "$(tree_state)" = "${before}" ]
+}
+
 # Both URLs land in files that another script reads as a value, so only a
 # plain https URL may through: no whitespace, quotes, backslashes, `$(` or
 # backticks, which would otherwise be executed or break the consumer.
@@ -254,6 +268,57 @@ evil'
   printed="$(sed -n '2,$p' <<< "${output}")"
   [ "$(jq -r .safe_address <<< "${printed}")" = "${SAFE_CHECKSUMMED}" ]
   [ "$(jq -r .module_address "${GVPN_IDENTITY_DIR}/provisioning.json")" = "${MODULE}" ]
+}
+
+@test "location changes only the location in the provisioning record" {
+  "${CLI}" identity
+  finalize
+  local record="${GVPN_IDENTITY_DIR}/provisioning.json" rest printed
+  rest="$(jq -S 'del(.exit.location)' "${record}")"
+  run "${CLI}" location "São Paulo, BR"
+  [ "${status}" -eq 0 ]
+  [ "$(jq -r .exit.location "${record}")" = "São Paulo, BR" ]
+  [ "$(jq -S 'del(.exit.location)' "${record}")" = "${rest}" ]
+  [ "$(stat -c %a "${record}")" = "644" ]
+  [ "$(ls "${GVPN_IDENTITY_DIR}" | grep -c '^provisioning\.json')" -eq 1 ]
+  printed="$(sed -n '/^{/,/^}/p' <<< "${output}")"
+  [ "$(jq -r .exit.location <<< "${printed}")" = "São Paulo, BR" ]
+  [ "$(jq -r .safe_address <<< "${printed}")" = "${SAFE_CHECKSUMMED}" ]
+  [[ "${output}" == *"hopli service update"* ]]
+}
+
+@test "location refuses a device that is not provisioned and writes nothing" {
+  "${CLI}" identity
+  run "${CLI}" location "Vilnius, LT"
+  [ "${status}" -ne 0 ]
+  [[ "${output}" == *"not provisioned"* ]]
+  [ ! -e "${GVPN_IDENTITY_DIR}/provisioning.json" ]
+}
+
+# gvpn-exit-status prints the record one tab-separated field per line.
+@test "location refuses an empty or multi-line location and keeps the record" {
+  "${CLI}" identity
+  finalize
+  local record
+  record="$(cat "${GVPN_IDENTITY_DIR}/provisioning.json")"
+  for location in "" $'Vilnius, LT\n' $'Vilnius\tLT' $'Vilnius, LT\r'; do
+    run "${CLI}" location "${location}"
+    [ "${status}" -ne 0 ] || { echo "accepted '${location}'"; false; }
+  done
+  run "${CLI}" location
+  [ "${status}" -ne 0 ]
+  run "${CLI}" location "Vilnius, LT" "Riga, LV"
+  [ "${status}" -ne 0 ]
+  [ "$(cat "${GVPN_IDENTITY_DIR}/provisioning.json")" = "${record}" ]
+}
+
+@test "location keeps a record it cannot read as it was" {
+  "${CLI}" identity
+  finalize
+  echo '{"exit":' > "${GVPN_IDENTITY_DIR}/provisioning.json"
+  run "${CLI}" location "Vilnius, LT"
+  [ "${status}" -ne 0 ]
+  [ "$(cat "${GVPN_IDENTITY_DIR}/provisioning.json")" = '{"exit":' ]
 }
 
 @test "finalize applies device shaping overrides" {

@@ -296,8 +296,10 @@ sudo gvpn-exit-hoprd-address refresh   # discovers, saves, restarts hoprd
 ```
 
 because the public address changed with the move; then repeat step 7. Run it
-again whenever the site's public IP changes. Extend the window before it expires
-for as long as you administer the device remotely.
+again whenever the site's public IP changes. When the site is not the location
+you gave `finalize`, record the new one with
+`sudo gvpn-exit-provision location "City, CC"`. Extend the window before it
+expires for as long as you administer the device remotely.
 
 The person on site has no login unless you add their key
 ([local access](local-access.md#adding-and-replacing-keys)); the device needs
