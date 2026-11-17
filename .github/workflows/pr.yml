@@ -91,7 +91,16 @@ jobs:
         run: echo N | sudo tee /sys/module/overlay/parameters/redirect_dir
 
       - name: Run just build
+        id: build
         run: nix develop -c just build
 
       - name: Build the console-configured installer ISO
         run: nix develop -c just iso-console-only
+
+      # Fails on a critical or high vulnerability that the build adds to the
+      # pinned base image, and lists every finding in the job summary
+      # (docs/build.md#vulnerability-scan). It runs whenever the image was
+      # built, so a failed ISO build does not hide its result.
+      - name: Scan the image for vulnerabilities
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: nix develop -c just scan

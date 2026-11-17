@@ -24,6 +24,7 @@ host's Incus installation, which is Linux-only and not part of the devshell
 | [`flake.nix`](../flake.nix), [`flake.lock`](../flake.lock)                                   | Devshell tools                                                                                                                                                             |
 | [`image/versions.env`](../image/versions.env)                                                | Base image digest, application versions and hashes, netdata version, node_exporter source package; bump by reviewed PR                                                     |
 | [`image/Containerfile`](../image/Containerfile), [`image/build/`](../image/build/)           | Release download and verification, Fedora updates and packages, node_exporter rebuild, blocklist snapshot, deployment config, OS name, smoke tests, `bootc container lint` |
+| [`.trivyignore.yaml`](../.trivyignore.yaml)                                                  | Findings the [vulnerability scan](#vulnerability-scan) accepts, each with the reason it does not apply                                                                     |
 | [`image/rootfs/`](../image/rootfs/)                                                          | Files copied into the OS                                                                                                                                                   |
 | [`keys/`](../keys/)                                                                          | Public keys only: release signing keys and the netdata repo key. The image-update key is an operator input, not a repository file.                                         |
 | [`image/bib/`](../image/bib/), [`tools/render-bib-config.sh`](../tools/render-bib-config.sh) | Installer and qcow2 templates, per-device input validation                                                                                                                 |
@@ -42,6 +43,7 @@ never put a private key under `keys/`.
 | `check-pins`                  | Verifies that the pinned base, hoprd image, builder and bootc-image-builder references still resolve (needs network)                                                                                                              |
 | `update-pins`                 | Moves the base, builder and bootc-image-builder pins to the newest reference their tags offer, then runs `check-pins`; the hoprd image digest moves with its binary hashes by hand. Review the diff and open a PR (needs network) |
 | `build`                       | `localhost/gvpn-exit-os:dev` in the builder's container storage                                                                                                                                                                   |
+| `scan`                        | Scans the built image with Trivy into `output/scan/trivy.json`; fails on a critical or high vulnerability the build adds to the base image ([vulnerability scan](#vulnerability-scan), needs network)                             |
 | `iso`                         | `build`, then the key-configured installer `output/iso/bootiso/install.iso` for hardware and Incus VMs                                                                                                                            |
 | `iso-console`                 | The same ISO with no SSH key; first access is the console                                                                                                                                                                         |
 | `iso-console-only`            | `iso-console` from an image already in the builder's storage (CI)                                                                                                                                                                 |
@@ -153,12 +155,13 @@ The installer ISO also reads:
 
 ## CI
 
-`.github/workflows/` builds on every pull request, pushes a signed image on
-every merge to `main`, and promotes manually; a promotion also builds and
-publishes the installer ISO of its channel. The release workflows push to Google
-Artifact Registry and log in through Workload Identity Federation: GitHub hands
-the job an OIDC token, the `gnosisvpn-gh-pool` provider in
-`gnosisvpn-production` exchanges it for the
+`.github/workflows/` builds and scans on every pull request
+([vulnerability scan](#vulnerability-scan)), pushes a signed image on every
+merge to `main`, and promotes manually; a promotion also builds and publishes
+the installer ISO of its channel. The release workflows push to Google Artifact
+Registry and log in through Workload Identity Federation: GitHub hands the job
+an OIDC token, the `gnosisvpn-gh-pool` provider in `gnosisvpn-production`
+exchanges it for the
 `download-gnosisvpn-gh-sa@gnosisvpn-production.iam.gserviceaccount.com` service
 account, and its access token logs Docker in as `oauth2accesstoken`. No registry
 credential is stored in GitHub. That service account needs a
@@ -246,6 +249,36 @@ password (or a token) needs no workflow change. Pull requests from forks never
 receive the secrets, so the signed build and push jobs run for `main` only
 (environment `release`); that is deliberate, so no secret is ever exposed to a
 fork.
+
+## Vulnerability scan
+
+`just scan` exports the built image from the builder and scans it with Trivy;
+pull requests run it after the build. Trivy, like Artifact Analysis, which scans
+the images in the registry, finds the Go modules and Go toolchains linked into
+binaries. Neither recognises Fedora, so neither checks the RPMs; the build
+applies Fedora's updates instead (`dnf -y upgrade` in `image/Containerfile`).
+
+The scan sorts the findings in two:
+
+- Inherited: in a layer of the pinned base image (`FEDORA_IOT_IMAGE`), or the
+  same vulnerability in the same module version as there, as in a base package
+  that the upgrade replaced and that still carries it. A pull request cannot fix
+  these, since the base moves with `just update-pins`, so they are counted.
+- Added by this build: everything else, such as netdata's `go.d.plugin` or
+  node_exporter. A critical or high one fails the scan.
+
+The report, which is also the job summary in CI, gives both counts and every
+added finding. To accept an added finding that does not apply, list it in
+`.trivyignore.yaml` with the reason (`statement`) and the file it is in
+(`paths`), so the same advisory in another binary is still reported.
+
+The base image keeps its files in its ostree repository as well,
+`/sysroot/ostree/repo/objects`, and both scanners report the base binaries from
+there. A package that the build removes or upgrades leaves its old files in that
+directory of the base layers: devices do not deploy them, but Trivy and Artifact
+Analysis still report them, as inherited findings. The removed CNI plugins,
+built with Go 1.26.5, are one. Only a new base image, or rechunking the built
+image, takes them out ([roadmap](roadmap.md#release-process)).
 
 ## Trust and reproducibility
 

@@ -41,6 +41,10 @@ build:
     image/build/configure-image.sh
     GVPN_IMAGE_VERSION="$(git describe --tags --always --dirty)" tools/builder.sh tools/build-image.sh {{image_tag}}
 
+# scan the built image with Trivy; fails on critical and high vulnerabilities the build adds to the base image (needs network)
+scan:
+    SOURCE_TAG={{image_tag}} tools/scan-image.sh
+
 # One installer serves hardware and an Incus VM. The operator key is always
 # included; the bastion tunnel inputs GVPN_BASTION, GVPN_SUPPORT_PORT,
 # GVPN_ENROLL_KEY and GVPN_BASTION_KNOWN_HOSTS (tools/render-bib-config.sh)
