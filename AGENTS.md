@@ -15,7 +15,8 @@ implemented, part of the [roadmap](docs/roadmap.md#fleet-and-onboarding).
 | Path                                  | What                                                                                                                                                                                                                                                                 |
 | ------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `image/Containerfile`                 | The OS image. Pins come from `image/versions.env` as build args.                                                                                                                                                                                                     |
-| `image/versions.env`                  | Base image digest, app versions + sha256, netdata version. Bump by PR only.                                                                                                                                                                                          |
+| `image/versions.env`                  | Base image digest, app versions + sha256, netdata version, node_exporter source package. Bump by PR only.                                                                                                                                                            |
+| `.trivyignore.yaml`                   | Findings `just scan` accepts, each with the reason it does not apply.                                                                                                                                                                                                |
 | `image/rootfs/`                       | Copied into the image: units, drop-ins, scripts, configs; deployment defaults are rendered during the build.                                                                                                                                                         |
 | `image/rootfs/usr/libexec/gvpn-exit/` | Bash runtime scripts; `lib.sh`, `checks.sh`, `public-ip.sh` are sourced helpers.                                                                                                                                                                                     |
 | `image/rootfs/usr/bin/`               | Operator CLIs: provisioning, support, status, hoprd address refresh and the hoprd v4-to-v5 migration.                                                                                                                                                                |
@@ -56,6 +57,9 @@ the VM harness needs x86_64 Linux with KVM (`cpu.bats` skips on Darwin because
 - `just build` - build the image (`localhost/gvpn-exit-os:dev`); needs
   `GVPN_IMAGE_REPO` and `GVPN_COSIGN_PUB` (the public half of the key that signs
   the updates this image will accept).
+- `just scan` - scan the built image with Trivy; fails on a critical or high
+  vulnerability that the build adds to the pinned base image, unless
+  `.trivyignore.yaml` lists it with its reason. PRs run it after the build.
 - `just iso` - unattended installer ISO for hardware and Incus VMs: your SSH key
   for `gvpn`, plus the first-access tunnel for a managed device (`GVPN_BASTION`,
   `GVPN_SUPPORT_PORT`, `GVPN_ENROLL_KEY`, `GVPN_BASTION_KNOWN_HOSTS`: all four

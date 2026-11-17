@@ -60,6 +60,28 @@ COPY image/rootfs/usr/libexec/gvpn-exit/gvpn-blocklist-update.sh \
 COPY image/rootfs/usr/share/gvpn-exit/exit.env /rootfs/usr/share/gvpn-exit/
 RUN /build/snapshot-blocklist.sh /rootfs /out/blocklist.cidr
 
+# --- node-exporter: Fedora's package, rebuilt with the build's Go ---
+# A Go binary carries the standard library of the toolchain it was built with,
+# so Fedora's node-exporter keeps that toolchain's vulnerabilities until Fedora
+# rebuilds the package. The same source package, rebuilt here with the golang
+# Fedora ships today, installs the same files, unit and user. Fedora's own
+# build ran the test suite on this source, so it is skipped here. Fedora IoT's
+# /root points into /var, which an image build does not have, so Go keeps its
+# build cache in /tmp.
+FROM ${FEDORA_IOT_IMAGE} AS node-exporter
+ARG NODE_EXPORTER_VERSION
+ARG NODE_EXPORTER_RELEASE
+ARG NODE_EXPORTER_SRPM_SHA256
+RUN dnf -y install --setopt=install_weak_deps=False rpm-build \
+ && curl -fsSL --retry 3 -o /tmp/node-exporter.src.rpm \
+      "https://kojipkgs.fedoraproject.org/packages/node-exporter/${NODE_EXPORTER_VERSION}/${NODE_EXPORTER_RELEASE}/src/node-exporter-${NODE_EXPORTER_VERSION}-${NODE_EXPORTER_RELEASE}.src.rpm" \
+ && echo "${NODE_EXPORTER_SRPM_SHA256}  /tmp/node-exporter.src.rpm" | sha256sum --check --quiet \
+ && dnf -y builddep --setopt=install_weak_deps=False /tmp/node-exporter.src.rpm \
+ && GOCACHE=/tmp/go-build rpmbuild --rebuild --without check --define '_topdir /tmp/rpmbuild' \
+      /tmp/node-exporter.src.rpm \
+ && mkdir /out \
+ && cp "/tmp/rpmbuild/RPMS/x86_64/node-exporter-${NODE_EXPORTER_VERSION}-${NODE_EXPORTER_RELEASE}.x86_64.rpm" /out/
+
 # --- the OS image ---
 FROM ${FEDORA_IOT_IMAGE}
 ARG NETDATA_VERSION
@@ -80,19 +102,35 @@ COPY keys/netdata-repo.asc /etc/pki/rpm-gpg/RPM-GPG-KEY-netdata
 # COPY put this one in a layer, it came back at ISO build time, and its file://
 # gpgkey does not resolve outside the image, so every ISO build stopped at
 # "cannot depsolve".
+#
+# Fedora's updates are applied first: the base image is rebuilt only now and
+# then, and its packages fall behind Fedora's security updates in between. Like
+# every package installed from Fedora's repositories here, the updates are the
+# ones current on the day of the build. A kernel update leaves files that bootc
+# does not accept in an image (/boot, /run/criu, /var/lib/rpm-state/kernel);
+# they are removed with the rest of what dnf leaves behind.
+#
+# The CNI plugins go: nothing on the appliance runs containers, and Podman uses
+# netavark. Their copies in the base image's ostree repository
+# (/sysroot/ostree/repo/objects) stay in the base layers, where image scanners
+# still report them, but devices do not deploy them; the same holds for the
+# previous version of every package the upgrade replaces.
 RUN --mount=type=bind,source=image/build,target=/build \
-    . /etc/os-release \
+    --mount=type=bind,from=node-exporter,source=/out,target=/rebuilt \
+    dnf -y upgrade --setopt=install_weak_deps=False \
+ && . /etc/os-release \
  && sed "s/@FEDORA_MAJOR@/${VERSION_ID%%.*}/" /build/netdata.repo > /etc/yum.repos.d/netdata.repo \
  && dnf -y install --setopt=install_weak_deps=False \
       wireguard-tools iptables-nft ipset iproute-tc \
       autossh chrony miniupnpc libnatpmp jq curl skopeo \
       ethtool procps-ng htop atop \
-      node-exporter \
+      /rebuilt/node-exporter-*.rpm \
       "netdata-${NETDATA_VERSION}" "netdata-plugin-go-${NETDATA_VERSION}" \
- && dnf -y remove firewalld \
+ && dnf -y remove firewalld containernetworking-plugins \
  && rm -f /etc/yum.repos.d/netdata.repo \
  && dnf clean all \
- && rm -rf /var/log/dnf5.log* /var/cache/libdnf5 /var/lib/dnf /run/dnf /var/cache/ldconfig/aux-cache
+ && rm -rf /var/log/dnf5.log* /var/cache/libdnf5 /var/lib/dnf /run/dnf /var/cache/ldconfig/aux-cache \
+      /boot/* /run/criu /var/lib/rpm-state/kernel
 
 COPY --from=fetch /out/bin/ /usr/bin/
 COPY --from=fetch /out/libexec/ /usr/libexec/gvpn-exit/

@@ -1,0 +1,47 @@
+# Findings that `just scan` (tools/scan-image.sh) accepts, each with the
+# reason it does not apply. Only the critical and high findings that the build
+# adds to the base image fail the scan, so only those need an entry. Scope each
+# entry to the file (paths) and the module version (purls) it was checked
+# against, so a new version of the component is checked again, and remove it
+# once the finding is gone. Format:
+# https://trivy.dev/docs/latest/configuration/filtering/#trivyignoreyaml
+vulnerabilities:
+  - id: CVE-2026-42151
+    paths:
+      - usr/libexec/netdata/plugins.d/go.d.plugin
+    purls:
+      - pkg:golang/github.com/prometheus/prometheus@v0.302.0
+    statement: >-
+      Not in the binary: netdata's go.d.plugin links only Prometheus'
+      model/labels, model/textparse and prompb packages, to parse what it
+      scrapes. The flaw is in the Prometheus server's Azure AD remote-write
+      configuration and config API.
+  - id: CVE-2026-42154
+    paths:
+      - usr/libexec/netdata/plugins.d/go.d.plugin
+    purls:
+      - pkg:golang/github.com/prometheus/prometheus@v0.302.0
+    statement: >-
+      Not in the binary: netdata's go.d.plugin links only Prometheus'
+      model/labels, model/textparse and prompb packages, to parse what it
+      scrapes. The flaw is in the Prometheus server's remote-read endpoint.
+  - id: CVE-2026-78661
+    paths:
+      - usr/libexec/netdata/plugins.d/go.d.plugin
+    purls:
+      - pkg:golang/golang.org/x/net@v0.59.0
+    statement: >-
+      Not in the binary: none of the golang.org/x/net/html parser functions
+      the advisory names (Parse, ParseFragment, parser.addText and the rest) is
+      linked into netdata's go.d.plugin.
+  - id: CVE-2026-78669
+    paths:
+      - usr/libexec/netdata/plugins.d/go.d.plugin
+    purls:
+      - pkg:golang/golang.org/x/net@v0.59.0
+    statement: >-
+      Not exercised: the flaw needs a malicious HTTP/2 peer that keeps changing
+      the initial window size. netdata's go.d.plugin runs no HTTP/2 server and
+      only connects to services on the appliance itself (node_exporter on
+      http://127.0.0.1:9100, systemd over D-Bus, netdata's stock autodetection
+      on localhost).

@@ -109,6 +109,8 @@
                 pkgs.skopeo
                 pkgs.cosign
                 pkgs.oras
+                # vulnerability scan of the built image (`just scan`)
+                pkgs.trivy
                 # cast, as the migration helper uses it on the device
                 foundry.defaultPackage.${system}
                 # SSH to the VM and the support bastion

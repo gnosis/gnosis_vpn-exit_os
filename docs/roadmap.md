@@ -16,15 +16,15 @@ Unbuilt features, acceptance gaps and open decisions. Current behaviour is in
 
 ## Release process
 
-- CI: Workflows run `just test`, `just lint`, `just build` and
-  `just
-  iso-console-only` on every PR. On PR merged into `main`, the image is
-  built and pushed to the remote repository signed, without moving channel tags
-  (`just push`). A manual workflow promotes a verified version to `canary` or
-  `stable` (`just promote VERSION CHANNEL`) and publishes the installer ISO that
-  follows that channel, built from the promoted image, as a signed OCI artifact
-  under `<version>-<channel>` and the channel tag in its own repository. Release
-  CI will add QEMU integration and snapshot/restore acceptance.
+- CI: Workflows run `just test`, `just lint`, `just build`,
+  `just iso-console-only` and `just scan` on every PR. On PR merged into `main`,
+  the image is built and pushed to the remote repository signed, without moving
+  channel tags (`just push`). A manual workflow promotes a verified version to
+  `canary` or `stable` (`just promote VERSION CHANNEL`) and publishes the
+  installer ISO that follows that channel, built from the promoted image, as a
+  signed OCI artifact under `<version>-<channel>` and the channel tag in its own
+  repository. Release CI will add QEMU integration and snapshot/restore
+  acceptance.
 - Release gate: `publish.sh` and `publish-iso.sh` refuse `-dirty` versions, but
   `git describe --dirty` ignores untracked files that the build context
   includes. Refuse those too, add `org.opencontainers.image.revision` and
@@ -43,6 +43,12 @@ Unbuilt features, acceptance gaps and open decisions. Current behaviour is in
   transition. Publishing from a workstation keeps the private half offline; the
   CI release workflow holds it as a secret of its `release` environment, so
   whoever can run that workflow can sign ([CI](build.md#ci)).
+- Rechunk the built image (`rpm-ostree compose build-chunked-oci`, in the base
+  image) so that the files of packages the build removes or upgrades leave the
+  image. Today they stay in the base layers' ostree repository, where Trivy and
+  Artifact Analysis report them although devices do not deploy them
+  ([vulnerability scan](build.md#vulnerability-scan)). Check the labels the
+  publish and ISO steps read, the installer build and the size of updates.
 - Automated pin-bump PRs for `image/versions.env`. `just check-pins` (CI, before
   the build) turns a dead pin into a named failure and `just update-pins` bumps
   every pin, so the gap is a scheduled job that runs it and opens the PR.
