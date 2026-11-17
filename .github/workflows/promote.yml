@@ -160,7 +160,7 @@ jobs:
         uses: hoprnet/hopr-workflows/actions/setup-gcp@837b94246698537325ecc664dfb22c72c0d6b8ed # setup-gcp-v4
         with:
           workload_identity_provider: projects/656686060169/locations/global/workloadIdentityPools/gnosisvpn-gh-pool/providers/github-provider
-          service_account: download-gnosisvpn-gh-sa@gnosisvpn-production.iam.gserviceaccount.com
+          service_account: gvpn-exit-os-release@gnosisvpn-production.iam.gserviceaccount.com
 
       # A GVPN_ISO_REPO on another Artifact Registry host is logged in to with
       # the same token.

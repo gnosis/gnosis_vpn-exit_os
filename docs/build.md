@@ -162,15 +162,16 @@ the installer ISO of its channel. The release workflows push to Google Artifact
 Registry and log in through Workload Identity Federation: GitHub hands the job
 an OIDC token, the `gnosisvpn-gh-pool` provider in `gnosisvpn-production`
 exchanges it for the
-`download-gnosisvpn-gh-sa@gnosisvpn-production.iam.gserviceaccount.com` service
+`gvpn-exit-os-release@gnosisvpn-production.iam.gserviceaccount.com` service
 account, and its access token logs Docker in as `oauth2accesstoken`. No registry
-credential is stored in GitHub. That service account needs a
-`roles/iam.workloadIdentityUser` binding for this repository's
-`attribute.repository` principal set and `roles/artifactregistry.writer` on the
-repositories below. That binding trusts every workflow run in the repository,
-not only the `release` environment, so push access is not the control: devices
-accept only images signed with the key below. Point the workflows at the
-repositories with repository settings:
+credential is stored in GitHub. That service account has
+`roles/artifactregistry.writer` on the image and ISO repositories only, and a
+single `roles/iam.workloadIdentityUser` binding for the principal
+`subject/repo:gnosis@24954468/gnosis_vpn-exit_os@1452478192:environment:release`:
+GitHub's immutable OIDC subject of a job in this repository's `release`
+environment. No other repository, and no job outside that environment, can use
+it. Push access is not the only control: devices accept only images signed with
+the key below. Point the workflows at the repositories with repository settings:
 
 | Kind     | Name                     | Value                                                                                                                                                                                 |
 | -------- | ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
