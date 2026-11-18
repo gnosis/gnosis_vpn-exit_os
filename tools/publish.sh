@@ -12,7 +12,8 @@
 #                                    <repo>:unsigned-probe, which the devices
 #                                    must refuse
 #
-# Steps: export SOURCE_TAG from the builder's storage, push it as
+# Steps: check that the build's OCI layout (output/image, which
+# tools/build-image.sh writes) holds the image SOURCE_TAG names, push it as
 # <repo>:<version label> with a sigstore signature, verify that signature
 # against the update public key, then point canary at the pushed digest. The
 # channel only moves once the signature verifies, and a published version is
@@ -24,6 +25,11 @@
 # skopeo signs: it writes the sigstore attachment format the devices read
 # (registries.d use-sigstore-attachments). cosign only verifies, against the
 # public key without a transparency log, since nothing is uploaded to one.
+#
+# The push reads the layout, not the builder's container storage: the layers
+# there carry the layer plan (ostree.components annotations) that the next
+# build keeps the layer layout with, and every copy out of container storage
+# drops those annotations.
 #
 #   GVPN_COSIGN_KEY              private key (default: cosign.key at the repo
 #                                root; never under keys/, which is build context)
@@ -46,8 +52,7 @@ GVPN_BUILDER="${GVPN_BUILDER:-${REPO_ROOT}/tools/builder.sh}"
 GVPN_COSIGN_KEY="${GVPN_COSIGN_KEY:-${REPO_ROOT}/cosign.key}"
 GVPN_COSIGN_PUB="${GVPN_COSIGN_PUB:-${REPO_ROOT}/keys/cosign.pub}"
 GVPN_COSIGN_PASSPHRASE_FILE="${GVPN_COSIGN_PASSPHRASE_FILE:-}"
-# Inside the repository, which is the only writable path the builder mounts.
-GVPN_PUBLISH_ARCHIVE="${GVPN_PUBLISH_ARCHIVE:-output/publish/image.oci.tar}"
+LAYOUT="oci:${GVPN_IMAGE_LAYOUT}:${GVPN_IMAGE_LAYOUT_REF}"
 PUBLIC_KEY="${GVPN_COSIGN_PUB}"
 REGISTRIES_D="${REPO_ROOT}/image/rootfs/etc/containers/registries.d"
 VERSION_RE='^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$'
@@ -60,7 +65,7 @@ die() {
 }
 
 image_version() {
-  skopeo inspect "oci-archive:${GVPN_PUBLISH_ARCHIVE}" | jq -r '.Labels["org.opencontainers.image.version"] // empty'
+  skopeo inspect "${LAYOUT}" | jq -r '.Labels["org.opencontainers.image.version"] // empty'
 }
 
 remote_digest() {
@@ -80,7 +85,7 @@ tag_published() {
 }
 
 publish() {
-  local channel="${1:-${CHANNEL}}" version digest moved
+  local channel="${1:-${CHANNEL}}" version digest moved layout_config image_id
   local move_channel=1
   local sign_args=(--sign-by-sigstore-private-key "${GVPN_COSIGN_KEY}")
   if [[ "${channel}" == "--no-channel" || "${channel}" == "push" ]]; then
@@ -99,10 +104,16 @@ publish() {
     die "GVPN_COSIGN_PASSPHRASE_FILE is not set and stdin is not a terminal: set it to a file holding the signing key's passphrase, or to an empty file for a key without one"
   fi
 
-  mkdir -p "$(dirname "${GVPN_PUBLISH_ARCHIVE}")"
-  trap 'rm -f "${GVPN_PUBLISH_ARCHIVE}" "${GVPN_PUBLISH_ARCHIVE}.digest"' EXIT
-  rm -f "${GVPN_PUBLISH_ARCHIVE}"
-  "${GVPN_BUILDER}" podman save --format oci-archive -o "${GVPN_PUBLISH_ARCHIVE}" "${SOURCE_TAG}"
+  # The layout holds the last build; publish it only as the image SOURCE_TAG
+  # names, whose ID is the layout's config digest.
+  layout_config="$(skopeo inspect --raw "${LAYOUT}" | jq -r '.config.digest')" \
+    || die "no built image at ${GVPN_IMAGE_LAYOUT}; build it with just build, then publish"
+  image_id="$("${GVPN_BUILDER}" podman image inspect --format '{{.Id}}' "${SOURCE_TAG}")"
+  [[ "${layout_config}" == "sha256:${image_id}" ]] \
+    || die "${GVPN_IMAGE_LAYOUT} holds ${layout_config}, not ${SOURCE_TAG} (sha256:${image_id}); build it with just build, then publish"
+  # Global: the EXIT trap runs after this function returns.
+  digest_file="$(mktemp)"
+  trap 'rm -f "${digest_file}"' EXIT
 
   version="$(image_version)"
   [[ "${version}" =~ ${VERSION_RE} ]] || die "image ${SOURCE_TAG} has no usable version label (got '${version}')"
@@ -113,12 +124,11 @@ publish() {
     die "${REPO}:${version} is already published; commit or tag, rebuild, then publish"
   fi
 
-  # --insecure-policy: the source is our own archive; what counts is the
+  # --insecure-policy: the source is our own build; what counts is the
   # signature check below, against the key the devices hold.
   skopeo copy --insecure-policy --registries.d "${REGISTRIES_D}" "${sign_args[@]}" \
-    --digestfile "${GVPN_PUBLISH_ARCHIVE}.digest" \
-    "oci-archive:${GVPN_PUBLISH_ARCHIVE}" "docker://${REPO}:${version}"
-  digest="$(< "${GVPN_PUBLISH_ARCHIVE}.digest")"
+    --digestfile "${digest_file}" "${LAYOUT}" "docker://${REPO}:${version}"
+  digest="$(< "${digest_file}")"
 
   cosign verify --key "${PUBLIC_KEY}" --insecure-ignore-tlog=true "${REPO}@${digest}" >/dev/null \
     || die "the signature on ${REPO}@${digest} does not verify against ${PUBLIC_KEY} (wrong GVPN_COSIGN_KEY or GVPN_COSIGN_PUB?); ${channel} not moved"

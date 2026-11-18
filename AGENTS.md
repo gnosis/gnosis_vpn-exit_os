@@ -54,9 +54,11 @@ the VM harness needs x86_64 Linux with KVM (`cpu.bats` skips on Darwin because
   the newest digest or immutable tag their tags offer, then check them; the
   hoprd image digest moves with its two binary hashes by hand. The diff goes in
   by PR.
-- `just build` - build the image (`localhost/gvpn-exit-os:dev`); needs
-  `GVPN_IMAGE_REPO` and `GVPN_COSIGN_PUB` (the public half of the key that signs
-  the updates this image will accept).
+- `just build` - build the image and rechunk it into layers split by package,
+  keeping the layer plan of `<GVPN_IMAGE_REPO>:canary` (`GVPN_PREVIOUS_BUILD`
+  names another image, empty none), into `output/image` and the builder as
+  `localhost/gvpn-exit-os:dev`; needs `GVPN_IMAGE_REPO` and `GVPN_COSIGN_PUB`
+  (the public half of the key that signs the updates this image will accept).
 - `just scan` - scan the built image with Trivy; fails on a critical or high
   vulnerability that the build adds to the pinned base image, unless
   `.trivyignore.yaml` lists it with its reason. PRs run it after the build.

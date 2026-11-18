@@ -42,7 +42,7 @@ never put a private key under `keys/`.
 | `lint`                        | shellcheck only, including `tests/integration/`                                                                                                                                                                                   |
 | `check-pins`                  | Verifies that the pinned base, hoprd image, builder and bootc-image-builder references still resolve (needs network)                                                                                                              |
 | `update-pins`                 | Moves the base, builder and bootc-image-builder pins to the newest reference their tags offer, then runs `check-pins`; the hoprd image digest moves with its binary hashes by hand. Review the diff and open a PR (needs network) |
-| `build`                       | `localhost/gvpn-exit-os:dev` in the builder's container storage                                                                                                                                                                   |
+| `build`                       | `localhost/gvpn-exit-os:dev` in the builder's container storage and the OCI layout `output/image`, [rechunked](#rechunking)                                                                                                       |
 | `scan`                        | Scans the built image with Trivy into `output/scan/trivy.json`; fails on a critical or high vulnerability the build adds to the base image ([vulnerability scan](#vulnerability-scan), needs network)                             |
 | `iso`                         | `build`, then the key-configured installer `output/iso/bootiso/install.iso` for hardware and Incus VMs                                                                                                                            |
 | `iso-console`                 | The same ISO with no SSH key; first access is the console                                                                                                                                                                         |
@@ -259,12 +259,16 @@ the images in the registry, finds the Go modules and Go toolchains linked into
 binaries. Neither recognises Fedora, so neither checks the RPMs; the build
 applies Fedora's updates instead (`dnf -y upgrade` in `image/Containerfile`).
 
-The scan sorts the findings in two:
+The built image is [rechunked](#rechunking) and shares no layer with the base
+image, so the scan also scans the pinned base image (`FEDORA_IOT_IMAGE`) from
+the builder's storage, where `just build` put it. It sorts the findings of the
+built image in two:
 
-- Inherited: in a layer of the pinned base image (`FEDORA_IOT_IMAGE`), or the
-  same vulnerability in the same module version as there, as in a base package
-  that the upgrade replaced and that still carries it. A pull request cannot fix
-  these, since the base moves with `just update-pins`, so they are counted.
+- Inherited: the base image has the same vulnerability in the same module
+  version, as a base package that the build left as it was does. A pull request
+  cannot fix these, since the base moves with `just update-pins`, so they are
+  counted. A base finding in a package the build removed or upgraded is not in
+  the built image and is not counted.
 - Added by this build: everything else, such as netdata's `go.d.plugin` or
   node_exporter. A critical or high one fails the scan.
 
@@ -273,13 +277,45 @@ added finding. To accept an added finding that does not apply, list it in
 `.trivyignore.yaml` with the reason (`statement`) and the file it is in
 (`paths`), so the same advisory in another binary is still reported.
 
-The base image keeps its files in its ostree repository as well,
-`/sysroot/ostree/repo/objects`, and both scanners report the base binaries from
-there. A package that the build removes or upgrades leaves its old files in that
-directory of the base layers: devices do not deploy them, but Trivy and Artifact
-Analysis still report them, as inherited findings. The removed CNI plugins,
-built with Go 1.26.5, are one. Only a new base image, or rechunking the built
-image, takes them out ([roadmap](roadmap.md#release-process)).
+Both scanners name a file of a bootc image after its object in the image's
+ostree repository (`sysroot/ostree/repo/objects/XX/....file`). The report, and
+the `paths` of `.trivyignore.yaml`, use the path the file is installed at
+instead, which the scan takes from `ostree ls` of the image's commit.
+
+## Rechunking
+
+`tools/build-image.sh` builds `image/Containerfile`, then rechunks the result:
+`rpm-ostree compose build-chunked-oci`, from the pinned base image, writes the
+finished filesystem as a new image, in layers split by package and with the
+build's labels, and `just build` tags that one. Without it the image would keep
+the base image's layers below its own, and those still hold every file of the
+packages the build removes or upgrades, such as the CNI plugins and the previous
+kernel. Devices never deploy those files, but every pull downloads them, and
+Trivy and Artifact Analysis report them.
+
+A rechunked layer depends only on the files of its packages, and a device
+downloads only the layers it does not have, so an update fetches the packages
+that changed rather than everything the build installed. The first update of a
+device that runs an image built before rechunking downloads the whole image
+once.
+
+Which packages share a layer is the layer plan, and rpm-ostree records it on
+each layer (`ostree.components` annotations). The build keeps the plan of the
+image devices update from, `<GVPN_IMAGE_REPO>:canary`
+(`rpm-ostree compose build-chunked-oci --previous-build`), so a package stays in
+its layer when others are added, removed or grow, and only the layers of the
+changed packages change. `GVPN_PREVIOUS_BUILD` names another image to take the
+plan from, as a containers transport reference such as
+`docker://registry.example.org/fleet/gvpn-exit-os:stable`; set it to empty to
+rechunk without one, for example where the registry cannot be reached, which
+fails the build otherwise. A previous image without a plan, such as one built
+before rechunking, and a tag that does not exist are ignored.
+
+Every copy out of the builder's container storage drops the annotations, so the
+rechunked image goes to the OCI layout `output/image` first and is copied into
+the storage from there. `just publish` and `just push` push that layout, after
+checking that it holds the image `SOURCE_TAG` names, so the registry, and with
+it the next build, keeps the plan.
 
 ## Trust and reproducibility
 
@@ -468,6 +504,7 @@ Terminal 1:
 
 ```sh
 export GVPN_IMAGE_REPO='registry.example.org/fleet/gvpn-exit-os'
+export GVPN_PREVIOUS_BUILD=''   # a repository that does not exist has no layer plan
 export GVPN_COSIGN_PUB='/secure/path/cosign.pub'
 export GVPN_OPERATOR_SSH_KEY="$HOME/.ssh/id_ed25519.pub"
 nix develop -c just test

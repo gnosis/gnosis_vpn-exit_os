@@ -21,6 +21,14 @@ base64_one_line() {
 # shellcheck disable=SC2034 # read by the scripts that source this file
 GVPN_CHANNEL_RE='^(canary|stable)$'
 
+# The OCI layout that tools/build-image.sh writes the built image to and
+# tools/publish.sh pushes from, relative to the repository root, and the name of
+# the image in it. Tests point the layout into their sandbox.
+# shellcheck disable=SC2034 # read by the scripts that source this file
+GVPN_IMAGE_LAYOUT="${GVPN_IMAGE_LAYOUT:-output/image}"
+# shellcheck disable=SC2034 # read by the scripts that source this file
+GVPN_IMAGE_LAYOUT_REF=gvpn-exit-os
+
 # iso_repo
 # Print the repository the installer ISO is published to and pulled from,
 # GVPN_ISO_REPO. It is a repository of its own: the ISO is tagged with the
