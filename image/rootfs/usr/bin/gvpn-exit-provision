@@ -30,6 +30,11 @@
 #
 #   gvpn-exit-provision status
 #
+#   gvpn-exit-provision location "City, CC"
+#       Change the location in the provisioning record of a provisioned device;
+#       nothing else in the record changes. The exit's registry entry keeps its
+#       own location, which only `hopli service update` changes.
+#
 # Secrets exist in plaintext only in a 0700 tmpfs work dir that is removed on
 # exit. Credentials are sealed to the TPM only (a host key on the unencrypted
 # root would add nothing) and without a PCR policy, so firmware updates and a
@@ -112,6 +117,12 @@ device_serial() {
     serial="$(tr -d '[:space:]' < "${GVPN_MACHINE_ID}")"
   fi
   echo "${serial}"
+}
+
+# A location is one line of text: gvpn-exit-status prints the provisioning
+# record one tab-separated field per line.
+location_ok() {
+  [[ -n "$1" && "$1" != *[[:cntrl:]]* ]]
 }
 
 random_hex() {
@@ -281,6 +292,8 @@ cmd_finalize() {
   https_url_ok "${blokli}" \
     || die "--blokli-url must be an https:// URL with a host name or IPv4 address and no userinfo (user:pass@host), whitespace, quotes or shell metacharacters"
   [[ -n "${location}" ]] || die "--location is required"
+  location_ok "${location}" \
+    || die "--location must be one line without tabs or control characters, such as \"Berlin, DE\""
   support_port="${support_port:-$(support_env_value SUPPORT_PORT)}"
   bastion="${bastion:-$(support_env_value BASTION)}"
   [[ -z "${support_port}" || "${support_port}" =~ ^[0-9]+$ ]] || die "--support-port must be a number"
@@ -385,6 +398,21 @@ cmd_finalize() {
   echo "Device provisioned. Reboot to start the exit node: sudo systemctl reboot"
 }
 
+cmd_location() {
+  local record="${GVPN_IDENTITY_DIR}/provisioning.json" location="${1:-}" updated
+  (( $# == 1 )) || die "usage: gvpn-exit-provision location \"City, CC\""
+  is_provisioned || die "not provisioned; finalize records the location (--location)"
+  location_ok "${location}" \
+    || die "the location must be one line without tabs or control characters, such as \"Berlin, DE\""
+  # A record jq cannot read stays as it is instead of becoming jq's empty output.
+  updated="$(jq --arg location "${location}" '.exit.location = $location' "${record}")" \
+    || die "cannot read ${record}; it is left as it was"
+  printf '%s\n' "${updated}" | write_atomic "${record}"
+  echo "Location set to \"${location}\". The exit's registry entry has its own"
+  echo "location in its metadata: change that with hopli service update."
+  checksum_record < "${record}"
+}
+
 cmd_status() {
   if is_provisioned; then
     echo "provisioned at $(< "${GVPN_IDENTITY_DIR}/provisioned")"
@@ -401,5 +429,6 @@ case "${1:-}" in
   identity) cmd_identity ;;
   finalize) shift; cmd_finalize "$@" ;;
   status) cmd_status ;;
-  *) echo "usage: ${0} identity|finalize|status" >&2; exit 64 ;;
+  location) shift; cmd_location "$@" ;;
+  *) echo "usage: ${0} identity|finalize|status|location" >&2; exit 64 ;;
 esac

@@ -171,6 +171,11 @@ from `bootc status --format=json`).
    support tunnel with the sealed key replaces the enrollment tunnel. `finalize`
    runs once per device: a second run is refused, so a re-run cannot rewrite the
    ownership record or extend the support window.
+5. `location "City, CC"` changes the location in the provisioning record of a
+   provisioned device, for example after a move, and nothing else in the record.
+   It and `finalize` refuse an empty location and one with tabs, line breaks or
+   other control characters. The exit's registry entry keeps its own location in
+   its metadata, which only `hopli service update` changes.
 
 ### Updating a v4 device to hoprd v5
 

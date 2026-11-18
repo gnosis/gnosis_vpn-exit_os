@@ -546,8 +546,10 @@ they are the session targets every device serves
 metadata lacks one of them or has another `version`. `meta` holds free labels
 that clients show: a name for the exit, its location and the two-letter country
 code. Change them later with `hopli service update` (the same flags; it burns
-the update fee). `hopli service deregister` removes the entry and is free;
-deregister before you retire the device.
+the update fee). The device keeps its own location, the one `finalize` recorded
+and `gvpn-exit-status` shows; change it on the device with
+`sudo gvpn-exit-provision location "City, CC"`. `hopli service deregister`
+removes the entry and is free; deregister before you retire the device.
 
 Also hand the node address to the Gnosis VPN project through
 support@gnosisvpn.com, so it is added to the client destination list for clients
