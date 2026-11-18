@@ -72,8 +72,8 @@ nix develop -c just channel=canary build publish
 `tools/publish.sh` then:
 
 1. checks that the build's OCI layout, `output/image`, holds the image in the
-   builder's storage, and pushes from it, which keeps the layer plan
-   ([rechunking](build.md#rechunking));
+   builder's storage, and pushes from it, which keeps the layer plan the next
+   build follows ([rechunking](build.md#rechunking));
 2. refuses a version tag (`git describe --tags --always --dirty`) that already
    exists, and one ending in `-dirty`: uncommitted source is not a release. Any
    lookup error other than `manifest unknown` aborts;

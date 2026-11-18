@@ -27,8 +27,9 @@
 # public key without a transparency log, since nothing is uploaded to one.
 #
 # The push reads the layout, not the builder's container storage: the layers
-# there carry the layer plan (ostree.components annotations), and every copy
-# out of container storage drops those annotations.
+# there carry the layer plan (ostree.components annotations) that the next
+# build keeps the layer layout with, and every copy out of container storage
+# drops those annotations.
 #
 #   GVPN_COSIGN_KEY              private key (default: cosign.key at the repo
 #                                root; never under keys/, which is build context)

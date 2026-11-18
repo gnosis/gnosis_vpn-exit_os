@@ -77,7 +77,7 @@ esac"
   grep -qx 'builder podman image inspect --format {{.Id}} localhost/gvpn-exit-os:dev' "${MOCK_LOG}"
   grep -q "^skopeo copy .*--registries.d ${REPO_ROOT}/image/rootfs/etc/containers/registries.d " "${MOCK_LOG}"
   # The layout, not a copy out of the builder's storage, which would drop the
-  # layer plan.
+  # layer plan the next build keeps.
   grep -q "^skopeo copy .*--sign-by-sigstore-private-key ${GVPN_COSIGN_KEY} .*${LAYOUT} docker://${REPO}:1.2.3$" "${MOCK_LOG}"
   run grep -q 'podman save' "${MOCK_LOG}"
   [ "${status}" -eq 1 ]

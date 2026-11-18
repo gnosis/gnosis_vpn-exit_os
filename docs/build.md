@@ -300,11 +300,22 @@ device that runs an image built before rechunking downloads the whole image
 once.
 
 Which packages share a layer is the layer plan, and rpm-ostree records it on
-each layer (`ostree.components` annotations). Every copy out of the builder's
-container storage drops the annotations, so the rechunked image goes to the OCI
-layout `output/image` first and is copied into the storage from there.
-`just publish` and `just push` push that layout, after checking that it holds
-the image `SOURCE_TAG` names, so the registry keeps the plan.
+each layer (`ostree.components` annotations). The build keeps the plan of the
+image devices update from, `<GVPN_IMAGE_REPO>:canary`
+(`rpm-ostree compose build-chunked-oci --previous-build`), so a package stays in
+its layer when others are added, removed or grow, and only the layers of the
+changed packages change. `GVPN_PREVIOUS_BUILD` names another image to take the
+plan from, as a containers transport reference such as
+`docker://registry.example.org/fleet/gvpn-exit-os:stable`; set it to empty to
+rechunk without one, for example where the registry cannot be reached, which
+fails the build otherwise. A previous image without a plan, such as one built
+before rechunking, and a tag that does not exist are ignored.
+
+Every copy out of the builder's container storage drops the annotations, so the
+rechunked image goes to the OCI layout `output/image` first and is copied into
+the storage from there. `just publish` and `just push` push that layout, after
+checking that it holds the image `SOURCE_TAG` names, so the registry, and with
+it the next build, keeps the plan.
 
 ## Trust and reproducibility
 
@@ -493,6 +504,7 @@ Terminal 1:
 
 ```sh
 export GVPN_IMAGE_REPO='registry.example.org/fleet/gvpn-exit-os'
+export GVPN_PREVIOUS_BUILD=''   # a repository that does not exist has no layer plan
 export GVPN_COSIGN_PUB='/secure/path/cosign.pub'
 export GVPN_OPERATOR_SSH_KEY="$HOME/.ssh/id_ed25519.pub"
 nix develop -c just test

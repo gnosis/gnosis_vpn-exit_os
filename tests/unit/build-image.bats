@@ -3,7 +3,7 @@
 # holds the finished filesystem split into layers by package, without the base
 # image's layers, which keep the files of every package the build removes or
 # upgrades. The rechunked image goes to an OCI layout, whose layers carry the
-# layer plan, and tools/publish.sh pushes it from there.
+# layer plan that tools/publish.sh pushes and the next build keeps.
 
 load helpers
 
@@ -16,6 +16,7 @@ setup() {
   export GVPN_IMAGE_VERSION=v1.2.3
   export GVPN_COSIGN_PUB_B64=cHVibGljIGtleQ
   export GVPN_IMAGE_LAYOUT="${SANDBOX}/image"
+  unset GVPN_PREVIOUS_BUILD
   mock_cmd podman
   mock_cmd chown
 }
@@ -56,9 +57,29 @@ call_line() {
   [[ "${output}" == *"built ${TAG} (v1.2.3)"* ]]
 }
 
-@test "a failed rechunk fails the build" {
+@test "the layer plan of the repository's canary keeps the layout, unless GVPN_PREVIOUS_BUILD names another image or none" {
+  run "${SCRIPT}" "${TAG}"
+  [ "${status}" -eq 0 ]
+  grep -q -- "rpm-ostree compose build-chunked-oci .*--previous-build docker://${GVPN_IMAGE_REPO}:canary " "${MOCK_LOG}"
+
+  : > "${MOCK_LOG}"
+  run env GVPN_PREVIOUS_BUILD=containers-storage:localhost/earlier "${SCRIPT}" "${TAG}"
+  [ "${status}" -eq 0 ]
+  grep -q -- "rpm-ostree compose build-chunked-oci .*--previous-build containers-storage:localhost/earlier " "${MOCK_LOG}"
+
+  # Empty: a build without the registry, such as one with no network access to it.
+  : > "${MOCK_LOG}"
+  run env GVPN_PREVIOUS_BUILD= "${SCRIPT}" "${TAG}"
+  [ "${status}" -eq 0 ]
+  grep -q 'rpm-ostree compose build-chunked-oci' "${MOCK_LOG}"
+  run grep -q -- '--previous-build' "${MOCK_LOG}"
+  [ "${status}" -eq 1 ]
+}
+
+@test "a failed rechunk fails the build and names the way to build without the registry" {
   mock_cmd podman '[[ "$1" != run ]]'
   run "${SCRIPT}" "${TAG}"
   [ "${status}" -ne 0 ]
   [[ "${output}" != *"built ${TAG}"* ]]
+  [[ "${output}" == *"docker://${GVPN_IMAGE_REPO}:canary"*"GVPN_PREVIOUS_BUILD"* ]]
 }
