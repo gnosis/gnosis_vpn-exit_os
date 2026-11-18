@@ -9,3 +9,6 @@ updates:
     groups:
       actions:
         patterns: ["*"]
+    # Security updates are not delayed by the cooldown.
+    cooldown:
+      default-days: 14
