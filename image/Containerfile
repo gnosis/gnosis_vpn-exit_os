@@ -111,10 +111,9 @@ COPY keys/netdata-repo.asc /etc/pki/rpm-gpg/RPM-GPG-KEY-netdata
 # they are removed with the rest of what dnf leaves behind.
 #
 # The CNI plugins go: nothing on the appliance runs containers, and Podman uses
-# netavark. Their copies in the base image's ostree repository
-# (/sysroot/ostree/repo/objects) stay in the base layers, where image scanners
-# still report them, but devices do not deploy them; the same holds for the
-# previous version of every package the upgrade replaces.
+# netavark. Their files, like those of the previous version of every package
+# the upgrade replaces, stay in the base image's layers below this one until
+# tools/build-image.sh rechunks the image.
 RUN --mount=type=bind,source=image/build,target=/build \
     --mount=type=bind,from=node-exporter,source=/out,target=/rebuilt \
     dnf -y upgrade --setopt=install_weak_deps=False \

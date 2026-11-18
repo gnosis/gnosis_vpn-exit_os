@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build the OS image with the pins from image/versions.env.
+# Build the OS image with the pins from image/versions.env, then rechunk it.
 # Runs inside tools/builder.sh (rootful podman).
 #
 #   tools/build-image.sh [TAG]
@@ -39,5 +39,34 @@ build_args+=(--build-arg "GVPN_COSIGN_PUB_B64=${GVPN_COSIGN_PUB_B64}")
 
 podman build --network=host --pull=missing \
   "${build_args[@]}" --build-arg "GVPN_IMAGE_VERSION=${version}" \
-  -f image/Containerfile -t "${tag}" .
+  -f image/Containerfile -t "${tag}-unchunked" .
+
+# Rechunk: the Containerfile's result keeps the base image's layers below its
+# own, and those layers still hold every file of the packages the build removes
+# or upgrades, where image scanners report them and every pull downloads them.
+# rpm-ostree writes the finished filesystem as a new image instead, split into
+# layers by package and keeping the build's labels, so an update downloads only
+# the layers whose packages changed. rpm-ostree comes from the pinned base
+# image and works on the builder's container storage.
+#
+# Each layer is annotated with the packages in it (ostree.components), the
+# layer plan. A copy out of container storage drops the annotations, so the
+# image goes to an OCI layout, which tools/publish.sh pushes, and is copied into
+# the storage from there.
+# rpm-ostree opens the output before writing it, so the layout has to exist.
+rm -rf "${GVPN_IMAGE_LAYOUT}"
+mkdir -p "${GVPN_IMAGE_LAYOUT}/blobs/sha256"
+printf '{"imageLayoutVersion":"1.0.0"}\n' > "${GVPN_IMAGE_LAYOUT}/oci-layout"
+printf '{"schemaVersion":2,"manifests":[]}\n' > "${GVPN_IMAGE_LAYOUT}/index.json"
+layout="$(cd "${GVPN_IMAGE_LAYOUT}" && pwd)"
+podman run --rm --privileged -v /var/lib/containers:/var/lib/containers -v "${layout}:/layout" \
+  "${FEDORA_IOT_IMAGE}" rpm-ostree compose build-chunked-oci --bootc --format-version=2 \
+  --from "${tag}-unchunked" --output "oci:/layout:${GVPN_IMAGE_LAYOUT_REF}"
+podman run --rm --privileged -v /var/lib/containers:/var/lib/containers -v "${layout}:/layout:ro" \
+  "${FEDORA_IOT_IMAGE}" skopeo copy --quiet "oci:/layout:${GVPN_IMAGE_LAYOUT_REF}" "containers-storage:${tag}"
+# --no-prune keeps the build's cached layers for the next build.
+podman rmi --no-prune "${tag}-unchunked"
+if [[ -n "${HOST_UID:-}" && -n "${HOST_GID:-}" ]]; then
+  chown -R "${HOST_UID}:${HOST_GID}" "${GVPN_IMAGE_LAYOUT}"
+fi
 echo "built ${tag} (${version})"

@@ -69,6 +69,9 @@ case "$1" in
   # podman image inspect: the image ID and the version label of the built image.
   image) echo "sha256:1d1d1d label-version" ;;
   run)
+    # The containers that rechunk the built image (tools/build-image.sh) write
+    # no disk image.
+    [[ "$*" == *bootc-image-builder* ]] || exit 0
     # bootc-image-builder writes its manifest next to the disk image.
     mkdir -p output/iso
     printf "{\"kickstart\": \"%%post -- curl enroll.key\"}\n" > output/iso/manifest-anaconda-iso.json

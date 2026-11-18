@@ -8,11 +8,13 @@ load helpers
 PUBLISH="${REPO_ROOT}/tools/publish.sh"
 REPO="registry.example.org:5443/fleet/exit-os"
 DIGEST="sha256:1111111111111111111111111111111111111111111111111111111111111111"
+IMAGE_ID="2222222222222222222222222222222222222222222222222222222222222222"
 
 setup() {
   setup_sandbox
   export GVPN_IMAGE_REPO="${REPO}"
-  export GVPN_PUBLISH_ARCHIVE="${SANDBOX}/publish/image.oci.tar"
+  export GVPN_IMAGE_LAYOUT="${SANDBOX}/image"
+  LAYOUT="oci:${GVPN_IMAGE_LAYOUT}:gvpn-exit-os"
   export GVPN_COSIGN_KEY="${SANDBOX}/cosign.key"
   echo "encrypted cosign key" > "${GVPN_COSIGN_KEY}"
   export GVPN_COSIGN_PUB="${SANDBOX}/cosign.pub"
@@ -21,8 +23,9 @@ setup() {
   export GVPN_COSIGN_PASSPHRASE_FILE="${SANDBOX}/passphrase"
   : > "${GVPN_COSIGN_PASSPHRASE_FILE}"
   export GVPN_BUILDER="${MOCK_BIN}/builder"
-  # builder mock: `podman save ... -o ARCHIVE TAG` writes the archive
-  mock_cmd builder 'out="$(sed -n "s/.* -o \([^ ]*\) .*/\1/p" <<< "$*")"; echo archive > "${out}"'
+  # builder mock: `podman image inspect` answers the ID of SOURCE_TAG.
+  mock_cmd builder "echo ${IMAGE_ID}"
+  layout_image "${IMAGE_ID}"
   image_version 1.2.3
   existing_version_tag no
   mock_cmd cosign
@@ -32,7 +35,12 @@ teardown() {
   teardown_sandbox
 }
 
-# The version label of the exported image.
+# The image the build's OCI layout holds, by its config digest without sha256:.
+layout_image() {
+  echo "$1" > "${SANDBOX}/layout-id"
+}
+
+# The version label of the image in the layout.
 image_version() {
   echo "$1" > "${SANDBOX}/version"
   write_skopeo
@@ -43,13 +51,15 @@ existing_version_tag() {
   write_skopeo
 }
 
-# skopeo mock: inspect answers for the archive, the version tag (yes: exists,
-# no: manifest unknown, anything else: a registry error) and the channel;
-# copy --digestfile writes the pushed digest.
+# skopeo mock: inspect answers for the layout (its manifest with --raw, its
+# labels without), the version tag (yes: exists, no: manifest unknown, anything
+# else: a registry error) and the channel; copy --digestfile writes the pushed
+# digest.
 write_skopeo() {
   mock_cmd skopeo "
 case \"\$*\" in
-  *'inspect oci-archive:'*) echo \"{\\\"Labels\\\":{\\\"org.opencontainers.image.version\\\":\\\"\$(cat '${SANDBOX}/version')\\\"}}\" ;;
+  *'inspect --raw oci:'*) echo \"{\\\"config\\\":{\\\"digest\\\":\\\"sha256:\$(cat '${SANDBOX}/layout-id')\\\"}}\" ;;
+  *'inspect oci:'*) echo \"{\\\"Labels\\\":{\\\"org.opencontainers.image.version\\\":\\\"\$(cat '${SANDBOX}/version')\\\"}}\" ;;
   *'inspect'*':canary') echo '${DIGEST}' ;;
   *'inspect'*)
     case \"\$(cat '${SANDBOX}/version-exists')\" in
@@ -61,12 +71,34 @@ case \"\$*\" in
 esac"
 }
 
-@test "pushes the built image as <repo>:<version>, signed the way the devices verify" {
+@test "pushes the build's OCI layout as <repo>:<version>, signed the way the devices verify" {
   run "${PUBLISH}"
   [ "${status}" -eq 0 ]
-  grep -q '^builder podman save --format oci-archive -o .* localhost/gvpn-exit-os:dev$' "${MOCK_LOG}"
+  grep -qx 'builder podman image inspect --format {{.Id}} localhost/gvpn-exit-os:dev' "${MOCK_LOG}"
   grep -q "^skopeo copy .*--registries.d ${REPO_ROOT}/image/rootfs/etc/containers/registries.d " "${MOCK_LOG}"
-  grep -q "^skopeo copy .*--sign-by-sigstore-private-key ${GVPN_COSIGN_KEY} .*oci-archive:${GVPN_PUBLISH_ARCHIVE} docker://${REPO}:1.2.3$" "${MOCK_LOG}"
+  # The layout, not a copy out of the builder's storage, which would drop the
+  # layer plan.
+  grep -q "^skopeo copy .*--sign-by-sigstore-private-key ${GVPN_COSIGN_KEY} .*${LAYOUT} docker://${REPO}:1.2.3$" "${MOCK_LOG}"
+  run grep -q 'podman save' "${MOCK_LOG}"
+  [ "${status}" -eq 1 ]
+}
+
+@test "refuses a layout that does not hold the image SOURCE_TAG names" {
+  layout_image 3333333333333333333333333333333333333333333333333333333333333333
+  run "${PUBLISH}"
+  [ "${status}" -ne 0 ]
+  [[ "${output}" == *"localhost/gvpn-exit-os:dev"*"just build"* ]]
+  run grep '^skopeo copy' "${MOCK_LOG}"
+  [ "${status}" -eq 1 ]
+}
+
+@test "refuses to publish without the build's layout" {
+  mock_cmd skopeo "case \"\$*\" in *'inspect --raw oci:'*) echo 'open index.json: no such file or directory' >&2; exit 1 ;; esac"
+  run "${PUBLISH}"
+  [ "${status}" -ne 0 ]
+  [[ "${output}" == *"${GVPN_IMAGE_LAYOUT}"*"just build"* ]]
+  run grep '^skopeo copy' "${MOCK_LOG}"
+  [ "${status}" -eq 1 ]
 }
 
 @test "verifies the pushed digest against the update public key before moving the channel" {
@@ -87,7 +119,7 @@ esac"
   run "${PUBLISH}" --no-channel
   [ "${status}" -eq 0 ]
   [[ "${output}" == *"no channel tag moved"* ]]
-  grep -q "^skopeo copy .*--sign-by-sigstore-private-key ${GVPN_COSIGN_KEY} .*oci-archive:${GVPN_PUBLISH_ARCHIVE} docker://${REPO}:1.2.3$" "${MOCK_LOG}"
+  grep -q "^skopeo copy .*--sign-by-sigstore-private-key ${GVPN_COSIGN_KEY} .*${LAYOUT} docker://${REPO}:1.2.3$" "${MOCK_LOG}"
   grep -qx "cosign verify --key ${GVPN_COSIGN_PUB} --insecure-ignore-tlog=true ${REPO}@${DIGEST}" "${MOCK_LOG}"
   run grep ':canary$' "${MOCK_LOG}"
   [ "${status}" -eq 1 ]
@@ -97,7 +129,7 @@ esac"
   run "${PUBLISH}" push
   [ "${status}" -eq 0 ]
   [[ "${output}" == *"no channel tag moved"* ]]
-  grep -q "^skopeo copy .*--sign-by-sigstore-private-key ${GVPN_COSIGN_KEY} .*oci-archive:${GVPN_PUBLISH_ARCHIVE} docker://${REPO}:1.2.3$" "${MOCK_LOG}"
+  grep -q "^skopeo copy .*--sign-by-sigstore-private-key ${GVPN_COSIGN_KEY} .*${LAYOUT} docker://${REPO}:1.2.3$" "${MOCK_LOG}"
   grep -qx "cosign verify --key ${GVPN_COSIGN_PUB} --insecure-ignore-tlog=true ${REPO}@${DIGEST}" "${MOCK_LOG}"
   run grep ':canary$' "${MOCK_LOG}"
   [ "${status}" -eq 1 ]
@@ -219,14 +251,6 @@ esac"
   grep -q -- "--sign-passphrase-file ${GVPN_COSIGN_PASSPHRASE_FILE} " "${MOCK_LOG}"
 }
 
-@test "removes the exported archive, also after a failure" {
-  run "${PUBLISH}"
-  [ ! -e "${GVPN_PUBLISH_ARCHIVE}" ]
-  mock_cmd cosign 'exit 1'
-  run "${PUBLISH}"
-  [ ! -e "${GVPN_PUBLISH_ARCHIVE}" ]
-}
-
 @test "unsigned-probe puts an unsigned copy of the channel image next to it" {
   run "${PUBLISH}" unsigned-probe
   [ "${status}" -eq 0 ]
@@ -251,7 +275,7 @@ esac"
   run env -u GVPN_IMAGE_REPO "${PUBLISH}"
   [ "${status}" -ne 0 ]
   [[ "${output}" == *"GVPN_IMAGE_REPO"* ]]
-  [ ! -e "${GVPN_PUBLISH_ARCHIVE}" ]
+  [ ! -s "${MOCK_LOG}" ]
 }
 
 @test "aborts when the version lookup fails for any reason but a missing manifest" {
