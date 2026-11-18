@@ -116,12 +116,13 @@ Tooling for this gate is [open work](roadmap.md#fleet-and-onboarding).
 
 ## After the installation
 
-| Task                                         | Read                                            |
-| -------------------------------------------- | ----------------------------------------------- |
-| Log in from the LAN, add or replace SSH keys | [Local access](local-access.md)                 |
-| Reach a managed device through the bastion   | [Bastion](bastion.md#reaching-a-device)         |
-| Get back into a device that lost its keys    | [Recovery stick](recovery.md)                   |
-| Update devices                               | [Publish and promote](publish-image.md)         |
-| Move a device to the production repository   | [Switch registry](switch-registry.md)           |
-| Move a device from hoprd v4 to v5            | [hoprd v4 to v5](hoprd-v5-migration.md)         |
-| Rehearse an installation in QEMU             | [Build system](build.md#qemu-install-rehearsal) |
+| Task                                         | Read                                                                  |
+| -------------------------------------------- | --------------------------------------------------------------------- |
+| Log in from the LAN, add or replace SSH keys | [Local access](local-access.md)                                       |
+| Reach a managed device through the bastion   | [Bastion](bastion.md#reaching-a-device)                               |
+| Get back into a device that lost its keys    | [Recovery stick](recovery.md)                                         |
+| Update devices                               | [Publish and promote](publish-image.md)                               |
+| Move a device to the production repository   | [Switch registry](switch-registry.md)                                 |
+| Move a device between canary and stable      | [Switch channel](switch-registry.md#switch-between-canary-and-stable) |
+| Move a device from hoprd v4 to v5            | [hoprd v4 to v5](hoprd-v5-migration.md)                               |
+| Rehearse an installation in QEMU             | [Build system](build.md#qemu-install-rehearsal)                       |
