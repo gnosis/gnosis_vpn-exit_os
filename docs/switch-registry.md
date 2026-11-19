@@ -1,14 +1,16 @@
-# Move a device to the production image repository
+# Move a device to another image repository or channel
 
 Devices installed before the production repository existed follow the HOPR
 Association repository. This runbook moves one such device, over SSH, to the
-GnosisVPN production repository:
+GnosisVPN production repository; its last section moves a device between the
+`canary` and `stable` channels of its repository
+([switch channel](#switch-between-canary-and-stable)):
 
 | What                | Repository                                                                                                    |
 | ------------------- | ------------------------------------------------------------------------------------------------------------- |
 | Old (`$OLD`)        | `europe-west3-docker.pkg.dev/hoprassociation/docker-images/gnosis-vpn-exit-os`                                |
 | Production (`$NEW`) | `europe-west3-docker.pkg.dev/gnosisvpn-production/docker-images/gnosis-vpn-exit-os`                           |
-| Channel (`$CH`)     | `canary`; neither repository has a `stable` tag                                                               |
+| Channel (`$CH`)     | `canary`; the old repository has no `stable` tag                                                              |
 | Key that signs both | the GnosisVPN image-update key, DER sha256 `0423195eca30b269171bf88515ea93659841e3b45b940e2a407ff921c70dcda1` |
 
 A device accepts signatures for the repository its image was built for only
@@ -215,3 +217,52 @@ To retry, publish a fixed image to production `canary` and repeat steps 3 to 5:
 the apply path refuses to apply a rejected digest. The old image leaves the
 device with its next update after a successful switch, when the production image
 becomes the rollback deployment; from then on the device can only go forward.
+
+## Switch between canary and stable
+
+A device follows one channel tag of its repository, `canary` or `stable`
+([promotion](publish-image.md#promotion-to-canary-or-stable)). Moving it to the
+other tag of the same repository needs no change to its signature policy: both
+tags are signed with the same key for the same repository. It is the
+`bootc switch` of step 3 and the apply of step 4. Staging follows the reference
+bootc tracks, so every later update comes from the new channel.
+
+Switch when the new channel serves the version the device runs or a newer one.
+There is no minimum-version floor ([updates](architecture.md#updates)): a
+channel that serves an older image is a downgrade, and the older hoprd then runs
+on a database a newer one wrote. When both tags point at the same digest, only
+the tracked tag changes and the device reboots into the image it runs.
+
+On the device, set the repository and the channel to move to, then compare what
+the device runs with what that channel serves:
+
+```sh
+REPO=europe-west3-docker.pkg.dev/gnosisvpn-production/docker-images/gnosis-vpn-exit-os
+CH=stable
+sudo bootc status --format=json \
+  | jq -r '.spec.image.image, .status.booted.image.imageDigest, .status.booted.image.version'
+skopeo inspect --no-tags "docker://$REPO:$CH" | jq -r '.Digest, .Labels["org.opencontainers.image.version"]'
+```
+
+The first line, the reference the device tracks, must be the other channel of
+`$REPO`; a device on another repository needs steps 1 to 5 first. Stage the
+channel without applying it, check the staged deployment, then apply it:
+
+```sh
+sudo flock /run/gvpn-exit/update.lock bootc switch --download-only "$REPO:$CH"
+sudo bootc status --format=json \
+  | jq '.status.staged | {image: .image.image.image, digest: .image.imageDigest, downloadOnly}'
+sudo systemctl start gvpn-exit-update-apply-now.service
+```
+
+Apply only when the staged deployment shows `$REPO:$CH`, the digest the channel
+serves and `"downloadOnly": true`. bootc 1.12 to 1.16.9 needs the two-command
+variant of step 3. Step 4 holds as written: without the apply unit, the next
+maintenance window applies the switch, and a reboot before then discards it, so
+the device follows its old channel again. `bootc switch --apply`, or a plain
+`bootc switch` and a reboot, skips the hoprd snapshot and the ownership record.
+
+After the reboot, `sudo bootc status` shows `$REPO:$CH` as booted and
+`sudo gvpn-exit-status` reports it as `image`. When greenboot rejects the boot,
+the device rolls back to its previous deployment, which tracks the old channel
+([if the device rolls back](#if-the-device-rolls-back)).

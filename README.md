@@ -30,23 +30,24 @@ configure access on the console (keyboard and monitor, or the VM console) with
 your own key before provisioning
 ([first login](docs/install-unmanaged.md#5-first-login)).
 
-| Task                                       | Read                                           |
-| ------------------------------------------ | ---------------------------------------------- |
-| Get onboarded as a developer               | [Intro deck](docs/intro/README.md)             |
-| Choose a setup and what an install needs   | [Install a device](docs/install.md)            |
-| Install a device administered remotely     | [Managed install](docs/install-managed.md)     |
-| Install a device reached from its LAN      | [Unmanaged install](docs/install-unmanaged.md) |
-| Log in from the LAN and manage SSH keys    | [Local access](docs/local-access.md)           |
-| Prepare a support bastion (managed setup)  | [Bastion](docs/bastion.md)                     |
-| Build and test locally or in QEMU          | [Build system](docs/build.md)                  |
-| Install the ISO into an Incus VM           | [Incus VM](docs/incus.md)                      |
-| Publish a canary update                    | [Publish runbook](docs/publish-image.md)       |
-| Move an installed v4 node to v5            | [hoprd v4 to v5](docs/hoprd-v5-migration.md)   |
-| Move a device to the production repository | [Switch registry](docs/switch-registry.md)     |
-| Get back into a device that lost its keys  | [Recovery stick](docs/recovery.md)             |
-| Understand runtime behaviour               | [Architecture](docs/architecture.md)           |
-| Check gaps and planned work                | [Roadmap](docs/roadmap.md)                     |
-| Change this repository                     | [Contributor guidance](AGENTS.md)              |
+| Task                                       | Read                                                                       |
+| ------------------------------------------ | -------------------------------------------------------------------------- |
+| Get onboarded as a developer               | [Intro deck](docs/intro/README.md)                                         |
+| Choose a setup and what an install needs   | [Install a device](docs/install.md)                                        |
+| Install a device administered remotely     | [Managed install](docs/install-managed.md)                                 |
+| Install a device reached from its LAN      | [Unmanaged install](docs/install-unmanaged.md)                             |
+| Log in from the LAN and manage SSH keys    | [Local access](docs/local-access.md)                                       |
+| Prepare a support bastion (managed setup)  | [Bastion](docs/bastion.md)                                                 |
+| Build and test locally or in QEMU          | [Build system](docs/build.md)                                              |
+| Install the ISO into an Incus VM           | [Incus VM](docs/incus.md)                                                  |
+| Publish a canary update                    | [Publish runbook](docs/publish-image.md)                                   |
+| Move an installed v4 node to v5            | [hoprd v4 to v5](docs/hoprd-v5-migration.md)                               |
+| Move a device to the production repository | [Switch registry](docs/switch-registry.md)                                 |
+| Move a device between canary and stable    | [Switch channel](docs/switch-registry.md#switch-between-canary-and-stable) |
+| Get back into a device that lost its keys  | [Recovery stick](docs/recovery.md)                                         |
+| Understand runtime behaviour               | [Architecture](docs/architecture.md)                                       |
+| Check gaps and planned work                | [Roadmap](docs/roadmap.md)                                                 |
+| Change this repository                     | [Contributor guidance](AGENTS.md)                                          |
 
 ```sh
 nix develop -c just test  # shellcheck + unit tests; no image build or VM
