@@ -379,18 +379,24 @@ operator re-measurement is disruptive:
 The probe is best effort and never gates the VPN (the server only `Wants=` it).
 Without an IPv4 address or default route on `lan0` it is skipped; an unreachable
 endpoint, a stream that ends early or an implausible rate keeps the last good
-sample. A rate below `GVPN_CAPACITY_MIN_KBIT` (1 Mbit/s) in either direction is
-implausible too: the probe completed on a link throttled to a trickle. With no
-sample at all the device assumes the supported-environment floor: 30 Mbit/s →
-7.5 Mbit/s aggregate and one slot. `GVPN_CAPACITY_STREAMS`,
+sample. An endpoint that answers 429 keeps it too, but the attempt is recorded
+as `rate-limited` instead of `failed`, and the journal names the endpoint and
+its `Retry-After` wait. Each stream dumps its response headers (`curl -D`), so
+the probe tells a rate limit from any other rejection without sending another
+request. `speed.cloudflare.com` publishes no limits and has answered a single
+boot's probe with 429 and a wait of about an hour, so the probe does not retry
+within the boot. A rate below `GVPN_CAPACITY_MIN_KBIT` (1 Mbit/s) in either
+direction is implausible too: the probe completed on a link throttled to a
+trickle. With no sample at all the device assumes the supported-environment
+floor: 30 Mbit/s → 7.5 Mbit/s aggregate and one slot. `GVPN_CAPACITY_STREAMS`,
 `GVPN_CAPACITY_WARMUP_S` and `GVPN_CAPACITY_WINDOW_S` tune the probe.
-`gvpn-exit-status` warns about a fallback or a failed probe, the heartbeat
-carries the sample and the derived values, and no outcome can fail a required
-greenboot check: a measured aggregate that cannot give every slot of a pinned
-pool 1 kbit/s falls back to the floor as well, so a sample never leaves shaping
-without its values. One probe per boot costs 11 s of line rate in each direction
-(about 140 MB each way at 100 Mbit/s); a pinned aggregate costs none, and a
-server restart reuses the cached sample instead of measuring again.
+`gvpn-exit-status` warns about a fallback or a failed or rate-limited probe, the
+heartbeat carries the sample and the derived values, and no outcome can fail a
+required greenboot check: a measured aggregate that cannot give every slot of a
+pinned pool 1 kbit/s falls back to the floor as well, so a sample never leaves
+shaping without its values. One probe per boot costs 11 s of line rate in each
+direction (about 140 MB each way at 100 Mbit/s); a pinned aggregate costs none,
+and a server restart reuses the cached sample instead of measuring again.
 
 Defaults in `exit.env`:
 
