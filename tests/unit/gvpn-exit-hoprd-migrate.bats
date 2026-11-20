@@ -74,10 +74,13 @@ setup() {
       *hoprd.api-token.cred*) printf "decrypted-token" > "$out" ;;
       *) exit 1 ;;
     esac'
+  # /startedz answers once the v4 node has started, as a real node does: a run
+  # with nothing to close stops the node right away, and before that the node
+  # might not have reached its own mock yet.
   mock_cmd curl '
     args="$*"
     case "$args" in
-      *"/startedz") exit 0 ;;
+      *"/startedz") grep -q "^hoprd-v4 " "${MOCK_LOG}" ;;
       *"/node/status") echo "{\"components\":{\"chain\":{\"status\":\"${CHAIN_STATUS:-Ready}\"}}}" ;;
       *"/channels?includingClosed=true"*)
         if [[ -e "${SANDBOX}/deleted" ]]; then
