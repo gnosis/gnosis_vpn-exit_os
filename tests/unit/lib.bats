@@ -287,6 +287,14 @@ capacity_values() {
   [ "${output}" = "7500 2 7500 7500 1 fallback" ]
 }
 
+@test "a rate-limited probe keeps the earlier sample" {
+  seed_capacity 200000 200000
+  sed -i 's/^GVPN_CAPACITY_ATTEMPT=ok/GVPN_CAPACITY_ATTEMPT=rate-limited/' "${GVPN_STATE_DIR}/capacity.env"
+  run capacity_values
+  [ "${status}" -eq 0 ]
+  [ "${output}" = "50000 11 10000 5000 10 measured" ]
+}
+
 @test "a cache with an unknown attempt value does not break load_exit_env" {
   printf 'GVPN_CAPACITY_SCHEMA=1\nGVPN_CAPACITY_ATTEMPT=nonsense\n' > "${GVPN_STATE_DIR}/capacity.env"
   run capacity_values

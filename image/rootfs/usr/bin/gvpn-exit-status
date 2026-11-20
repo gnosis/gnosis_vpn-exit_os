@@ -336,6 +336,14 @@ capacity() {
     measured:failed)
       report "uplink" "$(severity_for capacity)" \
         "probe failed at ${GVPN_CAPACITY_ATTEMPT_AT}, using the sample from ${GVPN_CAPACITY_MEASURED_AT}" ;;
+    # The endpoint refused the probe (HTTP 429); the journal of
+    # gvpn-exit-capacity.service names its Retry-After wait.
+    measured:rate-limited)
+      report "uplink" "$(severity_for capacity)" \
+        "probe rate limited by the endpoint at ${GVPN_CAPACITY_ATTEMPT_AT}, using the sample from ${GVPN_CAPACITY_MEASURED_AT}" ;;
+    *:rate-limited)
+      report "uplink" "$(severity_for capacity)" \
+        "probe rate limited by the endpoint at ${GVPN_CAPACITY_ATTEMPT_AT}, no sample, assuming the supported-environment floor" ;;
     *)
       report "uplink" "$(severity_for capacity)" "no sample, assuming the supported-environment floor" ;;
   esac
