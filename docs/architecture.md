@@ -70,10 +70,12 @@ Operator on the LAN (RFC1918 source) -------------------> device sshd -> gvpn (s
   needs no LAN route.
 - `hoprd.cfg.yaml` (v5) lets sessions reach only those two targets, enables the
   PIX/Curvy payment strategy and reads its proving artifacts from
-  `/usr/share/gvpn-exit/curvy-zk`. `hoprd-run.sh` renders a per-start copy into
-  `/run/hoprd/` with the provisioned Blokli URL in both the top-level and
-  PIX-pool fields, so a template change in an update reaches every device.
-  hoprd's API listens on `127.0.0.1:3001`; p2p uses port 9091.
+  `/usr/share/gvpn-exit/curvy-zk`. A paying session gets 100 MB of free service
+  before its deposit confirms (`max_predeposit_packets`), on start and again
+  after each paid cycle hands over to an unfunded one. `hoprd-run.sh` renders a
+  per-start copy into `/run/hoprd/` with the provisioned Blokli URL in both the
+  top-level and PIX-pool fields, so a template change in an update reaches every
+  device. hoprd's API listens on `127.0.0.1:3001`; p2p uses port 9091.
 - gnosis_vpn-server brings `wggvpn` up through wg-quick, whose hooks
   (`wg-hooks.sh`) install forwarding, NAT and shaping. The unit's `ExecStopPost`
   runs `wg-quick down` after a crash.
