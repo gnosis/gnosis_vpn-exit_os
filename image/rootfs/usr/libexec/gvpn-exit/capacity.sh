@@ -26,6 +26,10 @@
 # - an unreachable endpoint, a stream that ends before the window closes, an
 #   unreadable byte counter or an implausible rate (beyond the sanity bound, or
 #   below GVPN_CAPACITY_MIN_KBIT in either direction): keep the last good sample;
+# - an endpoint that answers 429: keep the last good sample and record the
+#   attempt as rate-limited, with the Retry-After wait in the log. Retrying in
+#   this boot would not help: the wait is about an hour, and a later sample
+#   would need a server restart that drops every client;
 # - no sample at all: lib.sh falls back to GVPN_PEER_CAPACITY_FALLBACK_KBIT,
 #   the supported-environment floor.
 # Every outcome is recorded in the cache for gvpn-exit-status and the
@@ -71,32 +75,55 @@ lan_bytes() {
   echo "${value}"
 }
 
-# stream down|up [PAYLOAD]
+# rate_limited < HEADERS
+# Succeed when one of the HTTP responses in HEADERS is a 429, and print its
+# Retry-After when that is a number of seconds (it may also be a date).
+rate_limited() {
+  local headers
+  headers="$(tr -d '\r')"
+  grep -qE '^HTTP/[0-9.]+ 429( |$)' <<< "${headers}" || return 1
+  sed -n 's/^retry-after: *\([0-9]\{1,9\}\) *$/\1/Ip' <<< "${headers}" | tail -n 1
+}
+
+# The endpoint's host and port, as the log names it.
+endpoint_host() {
+  local host="${GVPN_CAPACITY_URL#https://}"
+  echo "${host%%/*}"
+}
+
+# log_rate_limit WAIT [DIRECTION]
+log_rate_limit() {
+  log "${2:+$2load: }rate limited by $(endpoint_host) (HTTP 429)${1:+, retry after $1 s}"
+}
+
+# stream down|up HEADERS [PAYLOAD]
 # One stream of back-to-back requests on one reused connection. It replaces
 # the calling subshell, so the PID the caller holds is curl's own.
 # --fail-early ends the stream on the first rejected request and --speed-limit
-# on a stall, so a stream that stops transferring also stops running.
+# on a stall, so a stream that stops transferring also stops running. curl
+# appends the headers of every response, the rejected one included, to HEADERS.
 stream() {
-  local args=(-sS --fail --fail-early --proto "=https" --connect-timeout 10 --speed-limit 1 --speed-time 5)
+  local args=(-sS --fail --fail-early --proto "=https" --connect-timeout 10 --speed-limit 1 --speed-time 5 -D "$2")
   case "$1" in
     down)
       exec curl "${args[@]}" \
         "${GVPN_CAPACITY_URL}/__down?bytes=${REQUEST_BYTES}&n=[1-${REQUESTS_PER_STREAM}]" >/dev/null ;;
     up)
-      exec curl "${args[@]}" -H 'Expect:' -X POST -T "$2" \
+      exec curl "${args[@]}" -H 'Expect:' -X POST -T "$3" \
         "${GVPN_CAPACITY_URL}/__up?n=[1-${REQUESTS_PER_STREAM}]" >/dev/null ;;
   esac
 }
 
-# phase_kbit down|up [PAYLOAD]
+# phase_kbit down|up WORK_DIR [PAYLOAD]
 # The LAN port's rate in that direction over the window, in kbit/s, while
 # GVPN_CAPACITY_STREAMS streams keep it busy. The bytes include every other
-# flow on the port, which is the link's traffic too.
+# flow on the port, which is the link's traffic too. Returns 2 when the
+# endpoint rate-limited a stream, 1 on any other failure.
 phase_kbit() {
-  local direction="$1" counter=rx pids=() pid i start end rc ended=0
+  local direction="$1" work="$2" counter=rx pids=() pid i start end rc ended=0 retry
   [[ "${direction}" == up ]] && counter=tx
   for ((i = 0; i < GVPN_CAPACITY_STREAMS; i++)); do
-    stream "${direction}" "${2:-}" &
+    stream "${direction}" "${work}/${direction}-${i}.headers" "${3:-}" &
     pids+=("$!")
   done
   sleep "${GVPN_CAPACITY_WARMUP_S}"
@@ -113,6 +140,10 @@ phase_kbit() {
     (( rc == 143 )) || ended=1
   done
   if (( ended )); then
+    if retry="$({ cat "${work}/${direction}"-*.headers 2>/dev/null || true; } | rate_limited)"; then
+      log_rate_limit "${retry}" "${direction}"
+      return 2
+    fi
     log "${direction}load: a stream ended before the window closed"
     return 1
   fi
@@ -125,8 +156,11 @@ phase_kbit() {
 
 # Run the probe and print "<down_kbit> <up_kbit> <latency_ms> <endpoint>"; the
 # endpoint is the host, followed by Cloudflare's data centre when it names one.
+# Returns 2 when the endpoint rate-limited the probe, 1 on any other failure.
+# It runs in a command substitution, so its EXIT trap removes the work
+# directory (stream headers, upload payload) on every outcome.
 measure() {
-  local knob headers min_rtt_us latency=unknown colo down up payload endpoint
+  local knob headers min_rtt_us latency=unknown colo down up rc work retry
   if ! base_url_ok "${GVPN_CAPACITY_URL}"; then
     log "GVPN_CAPACITY_URL=${GVPN_CAPACITY_URL} is not an https base URL"
     return 1
@@ -145,18 +179,26 @@ measure() {
   # before any stream loads the link. Cloudflare's answer names the data centre
   # in CF-RAY and reports its own TCP statistics in Server-Timing; min_rtt (in
   # microseconds) is the latency without queueing. Other endpoints send
-  # neither, and the log then names only the host.
-  headers="$(curl -sS --fail --proto "=https" --max-time 10 -o /dev/null -D - \
-    "${GVPN_CAPACITY_URL}/__down?bytes=0" | tr -d '\r')" || return 1
+  # neither, and the log then names only the host. curl dumps the headers of a
+  # rejected answer too, so a rate limit is told apart here already.
+  if ! headers="$(curl -sS --fail --proto "=https" --max-time 10 -o /dev/null -D - \
+    "${GVPN_CAPACITY_URL}/__down?bytes=0" | tr -d '\r')"; then
+    retry="$(rate_limited <<< "${headers}")" || return 1
+    log_rate_limit "${retry}"
+    return 2
+  fi
   min_rtt_us="$(sed -n 's/^server-timing:.*cfL4;.*[?&]min_rtt=\([0-9]\{1,9\}\)[&"].*/\1/Ip' <<< "${headers}" | head -n 1)"
   [[ -z "${min_rtt_us}" ]] || latency="$(awk -v us="${min_rtt_us}" 'BEGIN { printf "%.1f\n", us / 1000 }')"
   colo="$(sed -n 's/^cf-ray: *[0-9a-f]*-\([A-Z]\{3,4\}\)$/\1/Ip' <<< "${headers}" | head -n 1)"
-  down="$(phase_kbit down)" || return 1
+  work="$(mktemp -d)"
+  # shellcheck disable=SC2064 # expand the path now: work is local
+  trap "rm -rf '${work}'" EXIT
+  down="$(phase_kbit down "${work}")" || return $?
   # Sparse: the upload body reads as zeros and takes no space in the private /tmp.
-  payload="$(mktemp)"
-  truncate -s "${REQUEST_BYTES}" "${payload}"
-  up="$(phase_kbit up "${payload}")" || up=""
-  rm -f "${payload}"
+  truncate -s "${REQUEST_BYTES}" "${work}/payload"
+  rc=0
+  up="$(phase_kbit up "${work}" "${work}/payload")" || rc=$?
+  (( rc != 2 )) || return 2
   kbit_ok "${down}" && kbit_ok "${up}" || return 1
   # The streams ran to the end of the window, but on a link throttled to a
   # trickle: not the link the device normally has, so not a sample to shape to.
@@ -164,9 +206,7 @@ measure() {
     log "measured down=${down}kbit up=${up}kbit is below GVPN_CAPACITY_MIN_KBIT=${GVPN_CAPACITY_MIN_KBIT}"
     return 1
   fi
-  endpoint="${GVPN_CAPACITY_URL#https://}"
-  endpoint="${endpoint%%/*}"
-  printf '%s %s %s %s\n' "${down}" "${up}" "${latency}" "${endpoint}${colo:+ ${colo}}"
+  printf '%s %s %s %s\n' "${down}" "${up}" "${latency}" "$(endpoint_host)${colo:+ ${colo}}"
 }
 
 iso_now() {
@@ -189,7 +229,7 @@ write_cache() {
 }
 
 main() {
-  local now down up sample server latency via
+  local now down up sample server latency via rc=0 attempt=failed outcome=failed
   now="$(iso_now)"
   # The last good sample survives a failed probe.
   down="${GVPN_CAPACITY_DOWN_KBIT}"
@@ -209,7 +249,8 @@ main() {
     return 0
   fi
 
-  if sample="$(measure)"; then
+  sample="$(measure)" || rc=$?
+  if (( rc == 0 )); then
     read -r down up latency server <<< "${sample}"
     write_cache "${down}" "${up}" "${now}" ok "${now}"
     # Re-read the env so the log line reports what this sample actually yields;
@@ -221,11 +262,15 @@ main() {
     return 0
   fi
 
-  write_cache "${down}" "${up}" "${GVPN_CAPACITY_MEASURED_AT}" failed "${now}"
+  if (( rc == 2 )); then
+    attempt=rate-limited
+    outcome="rate limited"
+  fi
+  write_cache "${down}" "${up}" "${GVPN_CAPACITY_MEASURED_AT}" "${attempt}" "${now}"
   if [[ -n "${GVPN_CAPACITY_MEASURED_AT}" ]]; then
-    log "capacity probe failed; keeping the sample from ${GVPN_CAPACITY_MEASURED_AT}"
+    log "capacity probe ${outcome}; keeping the sample from ${GVPN_CAPACITY_MEASURED_AT}"
   else
-    log "capacity probe failed; no sample yet, the supported-environment fallback applies"
+    log "capacity probe ${outcome}; no sample yet, the supported-environment fallback applies"
   fi
 }
 

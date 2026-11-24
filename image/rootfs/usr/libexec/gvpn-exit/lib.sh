@@ -281,7 +281,7 @@ load_capacity_cache() {
 
   [[ "${schema}" == "${GVPN_CAPACITY_SCHEMA}" ]] || return 0
   case "${attempt}" in
-    ok|failed|skipped)
+    ok|failed|rate-limited|skipped)
       # shellcheck disable=SC2034 # read by the scripts that source this file
       GVPN_CAPACITY_ATTEMPT="${attempt}" ;;
     *) return 0 ;;

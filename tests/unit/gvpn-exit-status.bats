@@ -456,6 +456,24 @@ esac'
   [[ "${output}" == *"peer slots:"*"6 (10.128.0.2-10.128.0.7)"* ]]
 }
 
+@test "warns when the endpoint rate-limited the last probe" {
+  provision_device
+  seed_capacity 200000 120000
+  sed -i 's/^GVPN_CAPACITY_ATTEMPT=ok/GVPN_CAPACITY_ATTEMPT=rate-limited/' "${GVPN_STATE_DIR}/capacity.env"
+  run "${CLI}"
+  [[ "${output}" == *"uplink:"*"WARN (probe rate limited by the endpoint at 2026-10-01T03:00:00Z, using the sample from 2026-10-01T03:00:00Z)"* ]]
+  [[ "${output}" == *"peer slots:"*"6 (10.128.0.2-10.128.0.7)"* ]]
+}
+
+@test "names the rate limit when the device has no sample yet" {
+  provision_device
+  seed_capacity "" ""
+  sed -i 's/^GVPN_CAPACITY_ATTEMPT=skipped/GVPN_CAPACITY_ATTEMPT=rate-limited/' "${GVPN_STATE_DIR}/capacity.env"
+  run "${CLI}"
+  [[ "${output}" == *"uplink:"*"WARN (probe rate limited by the endpoint at 2026-10-01T03:00:00Z, no sample, assuming the supported-environment floor)"* ]]
+  [[ "${output}" == *"peer slots:"*"1 (10.128.0.2-10.128.0.2)"* ]]
+}
+
 @test "a boot without an uplink keeps the earlier sample without warning" {
   provision_device
   seed_capacity 200000 120000

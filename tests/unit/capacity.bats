@@ -216,6 +216,91 @@ esac
   [[ "${output}" == *"upload: a stream ended before the window closed"* ]]
 }
 
+# A rejected request dumps its headers where curl's -D points, after those of
+# the requests the stream already completed, and ends the stream with exit 22.
+# REJECT holds the rejected response's header lines.
+REJECT_STREAM='
+dump=""; prev=""
+for arg in "$@"; do [[ "${prev}" == -D ]] && dump="${arg}"; prev="${arg}"; done
+{ printf "HTTP/2 200\r\n\r\n"; printf "%s\r\n" "${REJECT[@]}"; printf "\r\n"; } > "${dump}"
+exit 22'
+
+# A rate-limited endpoint answers 429 for an hour (Retry-After), so the sample
+# is kept, and the outcome is recorded apart from a failure for status and the
+# heartbeat to name.
+@test "a stream rejected with 429 records a rate-limited attempt and the wait" {
+  seed_capacity 200000 120000
+  mock_cmd sleep "${ADVANCE_COUNTERS}"'
+"${REAL_SLEEP}" 0.3'
+  mock_cmd curl '
+REJECT=("HTTP/2 429" "retry-after: 3172")
+case "$*" in
+  *"__down?bytes=0"*) ;;
+  *"__down"*) '"${REJECT_STREAM}"' ;;
+esac
+'"${CURL_OK}"
+  run bash "${SCRIPT}"
+  [ "${status}" -eq 0 ]
+  [ "$(cache_field GVPN_CAPACITY_ATTEMPT)" = "rate-limited" ]
+  [ "$(cache_field GVPN_CAPACITY_DOWN_KBIT)" = "200000" ]
+  [ "$(cache_field GVPN_CAPACITY_MEASURED_AT)" = "2026-10-01T03:00:00Z" ]
+  [[ "${output}" == *"download: rate limited by speed.cloudflare.com (HTTP 429), retry after 3172 s"* ]]
+  [[ "${output}" == *"capacity probe rate limited; keeping the sample from 2026-10-01T03:00:00Z"* ]]
+  [ "$(transfers '__up')" -eq 0 ]
+  [ -z "$(ls -A "${TMPDIR}")" ]
+}
+
+# Retry-After may also be an HTTP date; only a number of seconds is logged.
+@test "a 429 without a wait in seconds is still a rate limit" {
+  mock_cmd sleep "${ADVANCE_COUNTERS}"'
+"${REAL_SLEEP}" 0.3'
+  mock_cmd curl '
+REJECT=("HTTP/2 429" "Retry-After: Fri, 20 Nov 2026 12:00:00 GMT")
+case "$*" in
+  *"__up"*) '"${REJECT_STREAM}"' ;;
+esac
+'"${CURL_OK}"
+  run bash "${SCRIPT}"
+  [ "${status}" -eq 0 ]
+  [ "$(cache_field GVPN_CAPACITY_ATTEMPT)" = "rate-limited" ]
+  [ -z "$(cache_field GVPN_CAPACITY_DOWN_KBIT)" ]
+  [[ "${output}" == *"upload: rate limited by speed.cloudflare.com (HTTP 429)"$'\n'* ]]
+  [[ "${output}" != *"retry after"* ]]
+  [[ "${output}" == *"capacity probe rate limited; no sample yet"* ]]
+}
+
+# Any other rejection, such as the 403 for an oversized request, is a failure.
+@test "a stream rejected with another status is a failure, not a rate limit" {
+  mock_cmd sleep "${ADVANCE_COUNTERS}"'
+"${REAL_SLEEP}" 0.3'
+  mock_cmd curl '
+REJECT=("HTTP/2 403" "retry-after: 60")
+case "$*" in
+  *"__down?bytes=0"*) ;;
+  *"__down"*) '"${REJECT_STREAM}"' ;;
+esac
+'"${CURL_OK}"
+  run bash "${SCRIPT}"
+  [ "${status}" -eq 0 ]
+  [ "$(cache_field GVPN_CAPACITY_ATTEMPT)" = "failed" ]
+  [[ "${output}" == *"download: a stream ended before the window closed"* ]]
+  [[ "${output}" != *"rate limited"* ]]
+}
+
+@test "a preflight rejected with 429 loads no stream and records the rate limit" {
+  seed_capacity 200000 120000
+  mock_cmd curl '
+printf "HTTP/2 429\r\nretry-after: 3172\r\n\r\n"
+exit 22'
+  run bash "${SCRIPT}"
+  [ "${status}" -eq 0 ]
+  [ "$(cache_field GVPN_CAPACITY_ATTEMPT)" = "rate-limited" ]
+  [ "$(cache_field GVPN_CAPACITY_DOWN_KBIT)" = "200000" ]
+  [ "$(transfers '__down?bytes=[1-9]')" -eq 0 ]
+  [ "$(transfers '__up')" -eq 0 ]
+  [[ "${output}" == *"rate limited by speed.cloudflare.com (HTTP 429), retry after 3172 s"* ]]
+}
+
 @test "stops every stream and removes the upload payload" {
   run bash "${SCRIPT}"
   [ "${status}" -eq 0 ]

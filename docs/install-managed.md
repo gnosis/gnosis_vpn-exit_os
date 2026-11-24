@@ -232,9 +232,10 @@ Expect exit status 0 and:
 - hoprd health `ok` once funded; an unfunded node keeps its API closed (WARN)
 - `wggvpn: ok (listening on 51820)`, shaping `ok` on `wggvpn` and `ifb-gvpn`
 - capacity `ok` with the measured uplink, the peer slots and the aggregate; a
-  WARN means the probe failed or never ran: either the last good sample still
-  applies or, with no sample at all, the device serves one client on the
-  fallback capacity
+  WARN means the probe failed, was rate limited by the speed test endpoint or
+  never ran: either the last good sample still applies or, with no sample at
+  all, the device serves one client on the fallback capacity; the journal of
+  `gvpn-exit-capacity.service` says why
 - an announced address matching the observed one, or none if discovery failed
 - CPU `governor: ok (performance on N policies)`, energy preference
   `performance` (a VM often exposes no cpufreq policy and reports `n/a`)
