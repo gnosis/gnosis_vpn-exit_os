@@ -108,7 +108,11 @@ COPY keys/netdata-repo.asc /etc/pki/rpm-gpg/RPM-GPG-KEY-netdata
 # every package installed from Fedora's repositories here, the updates are the
 # ones current on the day of the build. A kernel update leaves files that bootc
 # does not accept in an image (/boot, /run/criu, /var/lib/rpm-state/kernel);
-# they are removed with the rest of what dnf leaves behind.
+# they are removed with the rest of what dnf leaves behind. So does an
+# selinux-policy update: its scriptlets rebuild the module store under
+# /var/lib/selinux and leave /run/selinux-policy, which `bootc container lint`
+# rejects. Nothing on the appliance edits modules; the compiled policy that
+# boots lives in /etc/selinux/targeted/policy and stays.
 #
 # The CNI plugins go: nothing on the appliance runs containers, and Podman uses
 # netavark. Their files, like those of the previous version of every package
@@ -129,7 +133,8 @@ RUN --mount=type=bind,source=image/build,target=/build \
  && rm -f /etc/yum.repos.d/netdata.repo \
  && dnf clean all \
  && rm -rf /var/log/dnf5.log* /var/cache/libdnf5 /var/lib/dnf /run/dnf /var/cache/ldconfig/aux-cache \
-      /boot/* /run/criu /var/lib/rpm-state/kernel
+      /boot/* /run/criu /var/lib/rpm-state/kernel \
+      /run/selinux-policy /var/lib/selinux/targeted
 
 COPY --from=fetch /out/bin/ /usr/bin/
 COPY --from=fetch /out/libexec/ /usr/libexec/gvpn-exit/
