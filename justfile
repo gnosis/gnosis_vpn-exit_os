@@ -36,6 +36,10 @@ check-pins:
 update-pins:
     tools/update-pins.sh
 
+# move the hoprd pin (version, image digest, both binary hashes) to a release (needs network, skopeo and docker or podman; review and PR the diff)
+bump-hoprd version:
+    tools/bump-hoprd.sh {{quote(version)}}
+
 # build the OS image into the builder's container storage
 build:
     image/build/configure-image.sh

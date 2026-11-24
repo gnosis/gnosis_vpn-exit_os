@@ -1,0 +1,101 @@
+name: Bump hoprd
+
+# Moves the hoprd pin of image/versions.env to a release and opens a PR for it.
+# Started by hand, or by the hoprd release workflow (hoprnet/hoprd) with a
+# repository_dispatch of type `bump_hoprd` and `{"version": "5.0.6"}`.
+#
+# The pins are computed by `just bump-hoprd` (tools/bump-hoprd.sh). A repository
+# secret BUMP_PR_TOKEN (a GitHub App or fine-grained token with contents and
+# pull-requests write) makes the PR's checks run: a PR opened with the default
+# token does not start other workflows. Without it the default token is used,
+# which needs "Allow GitHub Actions to create pull requests" in the settings.
+#
+# Actions are pinned by commit, because a moving tag would let whoever controls
+# it change what runs.
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'hoprd release to pin, for example 5.0.6'
+        required: true
+        type: string
+  repository_dispatch:
+    types: [bump_hoprd]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: bump-hoprd
+  cancel-in-progress: false
+
+jobs:
+  bump:
+    name: Bump
+    runs-on: depot-ubuntu-22.04-4
+    permissions:
+      contents: write
+      pull-requests: write
+    env:
+      VERSION: ${{ inputs.version || github.event.client_payload.version }}
+      GH_TOKEN: ${{ secrets.BUMP_PR_TOKEN || github.token }}
+    steps:
+      - name: Require a version
+        run: |
+          if [[ -z "${VERSION}" ]]; then
+            echo "::error::No version: pass the input, or client_payload.version in the dispatch"
+            exit 1
+          fi
+
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+          persist-credentials: false
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@3dc140bfc76c49fbd4dd958429132e3746bcb086 # v31.11.5
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+
+      - name: Move the hoprd pin
+        run: nix develop -c just bump-hoprd "${VERSION}"
+
+      - name: Open the pull request
+        run: |
+          if git diff --quiet; then
+            echo "hoprd ${VERSION} is already pinned, nothing to do"
+            exit 0
+          fi
+          branch="chore/hoprd-${VERSION}"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -b "${branch}"
+          git commit --quiet -am "chore(hoprd): bump to ${VERSION}"
+          git push --force "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "${branch}"
+
+          old="$(git show "HEAD~1:image/versions.env" | sed -n 's/^HOPRD_VERSION=//p')"
+          image="$(sed -n 's/^HOPRD_IMAGE=//p' image/versions.env)"
+          body="$(printf '%s\n' \
+            "Moves hoprd from ${old} to the ${VERSION} release of the PIX-enabled image." \
+            "" \
+            "## Changes" \
+            "" \
+            "- \`image/versions.env\`: \`HOPRD_VERSION\`, the \`HOPRD_IMAGE\` tag and index digest, and the sha256 of the \`hoprd\` and \`hoprd-cfg\` binaries move together, as \`tools/check-pins.sh\` asks." \
+            "" \
+            "## How the pins were taken" \
+            "" \
+            "\`just bump-hoprd ${VERSION}\`:" \
+            "" \
+            "- Index digest from \`skopeo inspect\` of the \`${VERSION}\` tag (\`${image#*@}\`)." \
+            "- Binary hashes: the files \`/bin/hoprd\` and \`/bin/hoprd-cfg\` (\`docker cp -L\`) in the linux/amd64 image." \
+            "" \
+            "Opened by the Bump hoprd workflow.")"
+
+          if [[ -n "$(gh pr list --head "${branch}" --state open --json number --jq '.[].number')" ]]; then
+            gh pr edit "${branch}" --body "${body}"
+          else
+            gh pr create --base main --head "${branch}" \
+              --title "chore(hoprd): bump to ${VERSION}" --body "${body}"
+          fi
