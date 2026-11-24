@@ -76,13 +76,21 @@ binary_hashes() {
     fi
   done
   "${engine}" rm -f "${cid}" >/dev/null
-  sha256sum "${workdir}/hoprd" "${workdir}/hoprd-cfg" | cut -d' ' -f1
+  if command -v sha256sum >/dev/null; then
+    sha256sum "${workdir}/hoprd" "${workdir}/hoprd-cfg" | cut -d' ' -f1
+  else
+    shasum -a 256 "${workdir}/hoprd" "${workdir}/hoprd-cfg" | cut -d' ' -f1
+  fi
   rm -rf "${workdir}"
 }
 
 # set_var VARIABLE VALUE: rewrite only VARIABLE's line of the versions file.
 set_var() {
-  sed -i -E "s|^($1=).*\$|\\1$2|" "${REPO_ROOT}/${VERSIONS_FILE}"
+  local file="${REPO_ROOT}/${VERSIONS_FILE}" tmp
+  tmp="$(mktemp)"
+  sed -E "s|^($1=).*\$|\\1$2|" "${file}" >"${tmp}"
+  cat "${tmp}" >"${file}"
+  rm -f "${tmp}"
 }
 
 bump_main() {
