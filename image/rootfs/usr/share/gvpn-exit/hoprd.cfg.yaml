@@ -16,7 +16,6 @@ hopr:
   # together. Announcement does not establish NAT or firewall reachability.
   announce: false
   network:
-    probe_interval: 30s # hopr-ct-full-network 0.11 caps it at 30s; hoprd default 60s fails startup
     pix:
       num_ssa_parts: 4096
       ssa_part_size: 32
@@ -28,6 +27,10 @@ hopr:
       max_deposit_wait: 3m
       max_recovery_time: 2h
       ssas_per_request: 1
+      # Free service before a deposit confirms: 68871 packets of up to 1452
+      # bytes is 100 MB. A session gets it on start and again after each
+      # paid cycle hands over to an unfunded one.
+      max_predeposit_packets: 68871
 session_ip_forwarding:
   # The only destinations session traffic may leave hoprd for: hoprd can
   # never be used to reach the LAN. These are the GnosisVPN client's built-in
