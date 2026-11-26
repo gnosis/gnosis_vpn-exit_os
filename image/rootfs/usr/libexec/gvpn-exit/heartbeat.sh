@@ -119,8 +119,8 @@ health_json() {
 }
 
 # The uplink sample (capacity.sh) and the capacity lib.sh derived from it, so a
-# device that runs on the supported-environment floor or on a stale sample is
-# visible in the fleet without reading its journal.
+# device that runs on the contract floor or on a stale sample is visible in the
+# fleet without reading its journal.
 capacity_json() {
   jq -n \
     --arg source "${GVPN_CAPACITY_SOURCE}" \
@@ -129,6 +129,7 @@ capacity_json() {
     --arg up "${GVPN_CAPACITY_UP_KBIT}" \
     --arg attempt "${GVPN_CAPACITY_ATTEMPT}" \
     --arg attempt_at "${GVPN_CAPACITY_ATTEMPT_AT}" \
+    --arg floor "${GVPN_CAPACITY_FLOOR_KBIT}" \
     --arg aggregate "${GVPN_PEER_SHAPING_AGGREGATE_KBIT}" \
     --arg ceiling "${GVPN_PEER_CEIL_KBIT}" \
     --arg guarantee "${GVPN_PEER_GUARANTEE_KBIT}" \
@@ -141,6 +142,7 @@ capacity_json() {
       measured_at: ($measured_at | select(. != "") // null),
       last_attempt: ($attempt | select(. != "") // null),
       last_attempt_at: ($attempt_at | select(. != "") // null),
+      contract_floor_kbit: ($floor | num),
       aggregate_kbit: ($aggregate | num),
       peer_ceiling_kbit: ($ceiling | num),
       peer_guarantee_kbit: ($guarantee | num),

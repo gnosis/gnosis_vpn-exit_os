@@ -100,8 +100,9 @@ phy_nic() {
 
 provision_device() {
   provision_sandbox
-  # A provisioned device has measured its uplink at boot (capacity.sh).
-  seed_capacity 200000 120000
+  # A provisioned device has measured its uplink at boot (capacity.sh): an
+  # 800 Mbit/s link carries the contract's 200 Mbit/s of VPN traffic.
+  seed_capacity 800000 800000
   printf 'HOPRD_SAFE_ADDRESS=%s\nHOPRD_MODULE_ADDRESS=%s\nHOPRD_BLOKLI_URL=%s\n' "${SAFE}" "${MODULE}" "${BLOKLI}" \
     > "${GVPN_HOPRD_ENV_DIR}/10-provisioned.env"
   cat > "${GVPN_IDENTITY_DIR}/provisioning.json" <<EOF
@@ -430,39 +431,56 @@ esac'
   run "${CLI}"
   [ "${status}" -eq 0 ]
   [[ "${output}" == *"== Capacity =="* ]]
-  [[ "${output}" == *"aggregate:"*"30000 kbit/s"* ]]
+  [[ "${output}" == *"aggregate:"*"200000 kbit/s"* ]]
+  [[ "${output}" == *"contract floor:"*"50000 kbit/s"* ]]
   [[ "${output}" == *"peer ceiling:"*"10000 kbit/s"* ]]
-  [[ "${output}" == *"peer guarantee:"*"5000 kbit/s"* ]]
-  [[ "${output}" == *"peer slots:"*"6 (10.128.0.2-10.128.0.7)"* ]]
-  [[ "${output}" == *"uplink:"*"ok (down 200000, up 120000 kbit/s)"* ]]
+  [[ "${output}" == *"peer guarantee:"*"10000 kbit/s"* ]]
+  [[ "${output}" == *"peer slots:"*"20 (10.128.0.2-10.128.0.21)"* ]]
+  [[ "${output}" == *"uplink:"*"ok (down 800000, up 800000 kbit/s)"* ]]
 }
 
 @test "warns when the capacity is assumed instead of measured" {
   provision_device
   rm -f "${GVPN_STATE_DIR}/capacity.env"
   run "${CLI}"
-  [[ "${output}" == *"peer slots:"*"1 (10.128.0.2-10.128.0.2)"* ]]
-  [[ "${output}" == *"aggregate:"*"7500 kbit/s"* ]]
-  [[ "${output}" == *"uplink:"*"WARN (no sample, assuming the supported-environment floor)"* ]]
+  [[ "${output}" == *"peer slots:"*"5 (10.128.0.2-10.128.0.6)"* ]]
+  [[ "${output}" == *"aggregate:"*"50000 kbit/s"* ]]
+  [[ "${output}" == *"contract floor:"*"50000 kbit/s"* ]]
+  [[ "${output}" == *"uplink:"*"WARN (no sample, assuming the 50000 kbit/s contract floor)"* ]]
+  [[ "${output}" == *"summary: 0 FAIL, 1 WARN"* ]]
+}
+
+# The link cannot carry the contract: the device serves the floor anyway and
+# says so, so the fleet can see an exit that is out of contract.
+@test "warns when the measurement is below the contract floor" {
+  provision_device
+  seed_capacity 200000 120000
+  run "${CLI}"
+  [ "${status}" -eq 0 ]
+  [[ "${output}" == *"aggregate:"*"50000 kbit/s"* ]]
+  [[ "${output}" == *"peer slots:"*"5 (10.128.0.2-10.128.0.6)"* ]]
+  [[ "${output}" == *"sample:"*"measured 2026-10-01T03:00:00Z, below the contract floor"* ]]
+  [[ "${output}" == *"uplink:"*"ok (down 200000, up 120000 kbit/s)"* ]]
+  [[ "${output}" == *"contract:"*"WARN (down 200000, up 120000 kbit/s, shaped to the 50000 kbit/s floor)"* ]]
   [[ "${output}" == *"summary: 0 FAIL, 1 WARN"* ]]
 }
 
 @test "warns when the last probe failed and an older sample still applies" {
   provision_device
-  seed_capacity 200000 120000
+  seed_capacity 800000 800000
   sed -i 's/^GVPN_CAPACITY_ATTEMPT=ok/GVPN_CAPACITY_ATTEMPT=failed/' "${GVPN_STATE_DIR}/capacity.env"
   run "${CLI}"
   [[ "${output}" == *"uplink:"*"WARN (probe failed at 2026-10-01T03:00:00Z, using the sample from 2026-10-01T03:00:00Z)"* ]]
-  [[ "${output}" == *"peer slots:"*"6 (10.128.0.2-10.128.0.7)"* ]]
+  [[ "${output}" == *"peer slots:"*"20 (10.128.0.2-10.128.0.21)"* ]]
 }
 
 @test "warns when the endpoint rate-limited the last probe" {
   provision_device
-  seed_capacity 200000 120000
+  seed_capacity 800000 800000
   sed -i 's/^GVPN_CAPACITY_ATTEMPT=ok/GVPN_CAPACITY_ATTEMPT=rate-limited/' "${GVPN_STATE_DIR}/capacity.env"
   run "${CLI}"
   [[ "${output}" == *"uplink:"*"WARN (probe rate limited by the endpoint at 2026-10-01T03:00:00Z, using the sample from 2026-10-01T03:00:00Z)"* ]]
-  [[ "${output}" == *"peer slots:"*"6 (10.128.0.2-10.128.0.7)"* ]]
+  [[ "${output}" == *"peer slots:"*"20 (10.128.0.2-10.128.0.21)"* ]]
 }
 
 @test "names the rate limit when the device has no sample yet" {
@@ -470,13 +488,13 @@ esac'
   seed_capacity "" ""
   sed -i 's/^GVPN_CAPACITY_ATTEMPT=skipped/GVPN_CAPACITY_ATTEMPT=rate-limited/' "${GVPN_STATE_DIR}/capacity.env"
   run "${CLI}"
-  [[ "${output}" == *"uplink:"*"WARN (probe rate limited by the endpoint at 2026-10-01T03:00:00Z, no sample, assuming the supported-environment floor)"* ]]
-  [[ "${output}" == *"peer slots:"*"1 (10.128.0.2-10.128.0.2)"* ]]
+  [[ "${output}" == *"uplink:"*"WARN (probe rate limited by the endpoint at 2026-10-01T03:00:00Z, no sample, assuming the 50000 kbit/s contract floor)"* ]]
+  [[ "${output}" == *"peer slots:"*"5 (10.128.0.2-10.128.0.6)"* ]]
 }
 
 @test "a boot without an uplink keeps the earlier sample without warning" {
   provision_device
-  seed_capacity 200000 120000
+  seed_capacity 800000 800000
   sed -i 's/^GVPN_CAPACITY_ATTEMPT=ok/GVPN_CAPACITY_ATTEMPT=skipped/' "${GVPN_STATE_DIR}/capacity.env"
   run "${CLI}"
   [ "${status}" -eq 0 ]

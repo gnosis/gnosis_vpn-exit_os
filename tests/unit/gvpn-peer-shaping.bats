@@ -109,9 +109,9 @@ in_shaping() {
   export GVPN_EXIT_OVERRIDES="${SANDBOX}/etc/exit.env"
   printf 'GVPN_PEER_SHAPING_AGGREGATE_KBIT=50000\n' > "${GVPN_EXIT_OVERRIDES}"
   result="$(in_script emit_tree wggvpn dst)"
-  # Ten slots at 5 Mbit/s each, .2 to .11.
-  [ "$(echo "${result}" | grep -c 'parent 1:1 classid 1:[0-9a-f]* htb rate 5000kbit ceil 10000kbit$')" -eq 10 ]
-  echo "${result}" | grep -q 'match ip dst 10.128.0.11/32 flowid 1:b$'
+  # Five slots at 10 Mbit/s each, .2 to .6.
+  [ "$(echo "${result}" | grep -c 'parent 1:1 classid 1:[0-9a-f]* htb rate 10000kbit ceil 10000kbit$')" -eq 5 ]
+  echo "${result}" | grep -q 'match ip dst 10.128.0.6/32 flowid 1:6$'
 }
 
 @test "up refuses an unresolved shaping config before touching the interface" {
@@ -135,7 +135,7 @@ in_shaping() {
   [ "${status}" -eq 0 ]
   [ -z "${output}" ]
   result="$(in_script emit_tree wggvpn dst)"
-  [ "$(echo "${result}" | grep -c 'parent 1:1 classid 1:[0-9a-f]* htb rate 29kbit ceil 7500kbit$')" -eq 253 ]
+  [ "$(echo "${result}" | grep -c 'parent 1:1 classid 1:[0-9a-f]* htb rate 197kbit ceil 10000kbit$')" -eq 253 ]
 }
 
 @test "the shaping guard refuses guarantees that over-subscribe the aggregate" {

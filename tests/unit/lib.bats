@@ -149,7 +149,7 @@ teardown() {
   echo "GVPN_PEER_RATE_KBIT=5000" > "${GVPN_EXIT_OVERRIDES}"
   run bash -c 'source "$1"; load_exit_env; echo "${GVPN_PEER_RATE_KBIT} ${GVPN_PEER_SHAPING_AGGREGATE_KBIT}"' _ "${LIB}"
   [ "${status}" -eq 0 ]
-  [ "${output}" = "5000 7500" ]
+  [ "${output}" = "5000 50000" ]
 }
 
 # The capacity knobs as shaping, the server and the diagnostics see them:
@@ -161,34 +161,72 @@ capacity_values() {
     "${GVPN_PEER_COUNT}" "${GVPN_CAPACITY_SOURCE}"' _ "${LIB}"
 }
 
-@test "without a measurement the capacity falls back to the supported floor" {
-  run capacity_values
-  [ "${status}" -eq 0 ]
-  [ "${output}" = "7500 2 7500 7500 1 fallback" ]
+# The contract floor (GVPN_PEER_MIN_SLOTS slots of GVPN_PEER_MIN_SHARE_KBIT)
+# and where the aggregate came from.
+capacity_contract() {
+  bash -c 'source "$1"; load_exit_env; printf "%s %s\n" \
+    "${GVPN_CAPACITY_FLOOR_KBIT}" "${GVPN_CAPACITY_SOURCE}"' _ "${LIB}"
 }
 
-@test "a measurement of the 200 Mbit/s example yields ten 5 Mbit/s slots" {
+@test "without a measurement the capacity falls back to the contract floor" {
+  run capacity_values
+  [ "${status}" -eq 0 ]
+  [ "${output}" = "50000 6 10000 10000 5 fallback" ]
+}
+
+@test "a measurement of the 200 Mbit/s example yields five 10 Mbit/s slots" {
   seed_capacity 200000 200000
   run capacity_values
-  [ "${output}" = "50000 11 10000 5000 10 measured" ]
+  [ "${output}" = "50000 6 10000 10000 5 measured" ]
 }
 
 @test "the smaller direction sizes the aggregate" {
-  seed_capacity 300000 120000
+  seed_capacity 500000 300000
   run capacity_values
-  [ "${output}" = "30000 7 10000 5000 6 measured" ]
+  [ "${output}" = "75000 8 10000 10000 7 measured" ]
 }
 
-@test "a link at the supported floor serves one peer at the whole aggregate" {
+# The contract: five clients with 10 Mbit/s each. A link that would derive less
+# than 50 Mbit/s of VPN traffic is raised to the floor instead of admitting
+# fewer or slower clients.
+@test "a measurement below the contract floor is raised to it" {
   seed_capacity 30000 30000
   run capacity_values
-  [ "${output}" = "7500 2 7500 7500 1 measured" ]
+  [ "${output}" = "50000 6 10000 10000 5 floor" ]
+  run capacity_contract
+  [ "${output}" = "50000 floor" ]
 }
 
-@test "a link below the supported floor still serves one peer" {
+@test "a link below the supported floor still serves the contract" {
   seed_capacity 8000 8000
   run capacity_values
-  [ "${output}" = "2000 2 2000 2000 1 measured" ]
+  [ "${output}" = "50000 6 10000 10000 5 floor" ]
+}
+
+@test "the contract floor follows GVPN_PEER_MIN_SLOTS" {
+  printf 'GVPN_PEER_MIN_SLOTS=10\n' > "${GVPN_EXIT_OVERRIDES}"
+  seed_capacity 30000 30000
+  run capacity_values
+  [ "${output}" = "100000 11 10000 10000 10 floor" ]
+}
+
+@test "the contract floor follows GVPN_PEER_MIN_SHARE_KBIT" {
+  printf 'GVPN_PEER_MIN_SHARE_KBIT=5000\n' > "${GVPN_EXIT_OVERRIDES}"
+  seed_capacity 30000 30000
+  run capacity_values
+  [ "${output}" = "25000 6 10000 5000 5 floor" ]
+}
+
+# A floor that cannot be derived leaves the aggregate unresolved on purpose:
+# shaping then names the knob instead of quietly shaping to a number nobody
+# asked for.
+@test "an unusable contract floor leaves the derived values unresolved" {
+  printf 'GVPN_PEER_MIN_SLOTS=none\n' > "${GVPN_EXIT_OVERRIDES}"
+  run capacity_contract
+  [ "${status}" -eq 0 ]
+  [ "${output}" = " fallback" ]
+  run bash -c 'source "$1"; load_exit_env; echo "aggregate=${GVPN_PEER_SHAPING_AGGREGATE_KBIT}"' _ "${LIB}"
+  [ "${output}" = "aggregate=auto" ]
 }
 
 # A probe can complete on a link that is throttled to a trickle. Such a sample
@@ -196,7 +234,7 @@ capacity_values() {
 @test "a sample below GVPN_CAPACITY_MIN_KBIT is not used" {
   seed_capacity 200000 400
   run capacity_values
-  [ "${output}" = "7500 2 7500 7500 1 fallback" ]
+  [ "${output}" = "50000 6 10000 10000 5 fallback" ]
   run bash -c 'source "$1"; load_exit_env; echo "down=${GVPN_CAPACITY_DOWN_KBIT} up=${GVPN_CAPACITY_UP_KBIT} at=${GVPN_CAPACITY_MEASURED_AT}"' _ "${LIB}"
   [ "${output}" = "down= up= at=" ]
 }
@@ -205,7 +243,9 @@ capacity_values() {
   echo "GVPN_CAPACITY_MIN_KBIT=400" > "${GVPN_EXIT_OVERRIDES}"
   seed_capacity 200000 400
   run capacity_values
-  [ "${output}" = "100 2 100 100 1 measured" ]
+  # The sample is accepted, and the upload still sizes the aggregate under the
+  # floor.
+  [ "${output}" = "50000 6 10000 10000 5 floor" ]
 }
 
 @test "an invalid GVPN_CAPACITY_MIN_KBIT costs the sample, not the shaping" {
@@ -213,7 +253,7 @@ capacity_values() {
   seed_capacity 200000 200000
   run capacity_values_strict
   [ "${status}" -eq 0 ]
-  [ "${output}" = "7500 2 7500 7500 1 fallback" ]
+  [ "${output}" = "50000 6 10000 10000 5 fallback" ]
 }
 
 # The pool is pinned and the aggregate follows the measurement: a slow sample
@@ -223,8 +263,8 @@ capacity_values() {
   echo "GVPN_PEER_MAX_OCTET=254" > "${GVPN_EXIT_OVERRIDES}"
   seed_capacity 1000 1000
   run capacity_values
-  # 250 kbit/s over 253 slots is no share at all; 7500 kbit/s gives each 29.
-  [ "${output}" = "7500 254 7500 29 253 fallback" ]
+  # 250 kbit/s over 253 slots is no share at all; 50000 kbit/s gives each 197.
+  [ "${output}" = "50000 254 10000 197 253 fallback" ]
 }
 
 @test "a fast link is capped at the last usable address of the /24" {
@@ -234,25 +274,36 @@ capacity_values() {
   [ "${output}" = "500000000 254 10000 10000 253 measured" ]
 }
 
-@test "the guarantee is the aggregate share when it fits under the ceiling" {
-  seed_capacity 120000 120000
+@test "a large pinned pool spreads the aggregate thin" {
+  echo "GVPN_PEER_MAX_OCTET=254" > "${GVPN_EXIT_OVERRIDES}"
+  seed_capacity 200000 200000
   run capacity_values
-  # 30 Mbit/s aggregate over 6 slots: 5 Mbit/s each, under the 10 Mbit/s ceiling.
-  [ "${output}" = "30000 7 10000 5000 6 measured" ]
+  # The guarantee is the aggregate share when that fits under the ceiling.
+  [ "${output}" = "50000 254 10000 197 253 measured" ]
+}
+
+@test "a slower per-client share yields more slots at that share" {
+  echo "GVPN_PEER_MIN_SHARE_KBIT=5000" > "${GVPN_EXIT_OVERRIDES}"
+  seed_capacity 200000 200000
+  run capacity_values
+  # 50 Mbit/s aggregate over ten slots: 5 Mbit/s each, under the 10 Mbit/s ceiling.
+  [ "${output}" = "50000 11 10000 5000 10 measured" ]
 }
 
 @test "the pool follows GVPN_PEER_MIN_OCTET" {
   echo "GVPN_PEER_MIN_OCTET=10" > "${GVPN_EXIT_OVERRIDES}"
   seed_capacity 200000 200000
   run capacity_values
-  [ "${output}" = "50000 19 10000 5000 10 measured" ]
+  [ "${output}" = "50000 14 10000 10000 5 measured" ]
 }
 
+# A pin sets the band the device shapes to; the pool still holds the contract's
+# slots, so a pinned aggregate under the floor admits its share to five clients.
 @test "a pinned aggregate replaces the measurement" {
   echo "GVPN_PEER_SHAPING_AGGREGATE_KBIT=20000" > "${GVPN_EXIT_OVERRIDES}"
   seed_capacity 200000 200000
   run capacity_values
-  [ "${output}" = "20000 5 10000 5000 4 pinned" ]
+  [ "${output}" = "20000 6 10000 4000 5 pinned" ]
 }
 
 @test "a pinned pool keeps the guarantee honest for its size" {
@@ -266,7 +317,7 @@ capacity_values() {
   echo "GVPN_PEER_RATE_KBIT=10000" > "${GVPN_EXIT_OVERRIDES}"
   echo "GVPN_PEER_SHAPING_AGGREGATE_KBIT=6000" >> "${GVPN_EXIT_OVERRIDES}"
   run capacity_values
-  [ "${output}" = "6000 2 6000 6000 1 pinned" ]
+  [ "${output}" = "6000 6 6000 1200 5 pinned" ]
 }
 
 @test "a corrupt cache falls back instead of changing shaping" {
@@ -277,14 +328,14 @@ capacity_values() {
   echo "GVPN_CAPACITY_ATTEMPT=ok" >> "${GVPN_STATE_DIR}/capacity.env"
   run capacity_values
   [ "${status}" -eq 0 ]
-  [ "${output}" = "7500 2 7500 7500 1 fallback" ]
+  [ "${output}" = "50000 6 10000 10000 5 fallback" ]
 }
 
 @test "a cache from another schema is ignored" {
   seed_capacity 200000 200000
   sed -i 's/^GVPN_CAPACITY_SCHEMA=1/GVPN_CAPACITY_SCHEMA=2/' "${GVPN_STATE_DIR}/capacity.env"
   run capacity_values
-  [ "${output}" = "7500 2 7500 7500 1 fallback" ]
+  [ "${output}" = "50000 6 10000 10000 5 fallback" ]
 }
 
 @test "a rate-limited probe keeps the earlier sample" {
@@ -292,14 +343,14 @@ capacity_values() {
   sed -i 's/^GVPN_CAPACITY_ATTEMPT=ok/GVPN_CAPACITY_ATTEMPT=rate-limited/' "${GVPN_STATE_DIR}/capacity.env"
   run capacity_values
   [ "${status}" -eq 0 ]
-  [ "${output}" = "50000 11 10000 5000 10 measured" ]
+  [ "${output}" = "50000 6 10000 10000 5 measured" ]
 }
 
 @test "a cache with an unknown attempt value does not break load_exit_env" {
   printf 'GVPN_CAPACITY_SCHEMA=1\nGVPN_CAPACITY_ATTEMPT=nonsense\n' > "${GVPN_STATE_DIR}/capacity.env"
   run capacity_values
   [ "${status}" -eq 0 ]
-  [ "${output}" = "7500 2 7500 7500 1 fallback" ]
+  [ "${output}" = "50000 6 10000 10000 5 fallback" ]
 }
 
 # The cache is read inside the firewall's ExecStartPre and the required greenboot
@@ -316,7 +367,7 @@ capacity_values_strict() {
   mkdir "${GVPN_STATE_DIR}/capacity.env"
   run capacity_values_strict
   [ "${status}" -eq 0 ]
-  [ "${output}" = "7500 2 7500 7500 1 fallback" ]
+  [ "${output}" = "50000 6 10000 10000 5 fallback" ]
 }
 
 @test "an oversized cache is ignored instead of being parsed" {
@@ -325,7 +376,7 @@ capacity_values_strict() {
   [ "$(stat -c %s "${GVPN_STATE_DIR}/capacity.env")" -gt 4096 ]
   run capacity_values_strict
   [ "${status}" -eq 0 ]
-  [ "${output}" = "7500 2 7500 7500 1 fallback" ]
+  [ "${output}" = "50000 6 10000 10000 5 fallback" ]
 }
 
 @test "an invalid peer rate is left for shaping to reject, not replaced" {
@@ -346,7 +397,7 @@ capacity_values_strict() {
 @test "repeated loads derive the same capacity" {
   seed_capacity 200000 200000
   run bash -c 'source "$1"; load_exit_env; first="${GVPN_PEER_MAX_OCTET} ${GVPN_PEER_SHAPING_AGGREGATE_KBIT}"; load_exit_env; echo "${first} | ${GVPN_PEER_MAX_OCTET} ${GVPN_PEER_SHAPING_AGGREGATE_KBIT}"' _ "${LIB}"
-  [ "${output}" = "11 50000 | 11 50000" ]
+  [ "${output}" = "6 50000 | 6 50000" ]
 }
 
 @test "load_exit_env derives the peer subnet prefix from WIREGUARD_CIDR" {
