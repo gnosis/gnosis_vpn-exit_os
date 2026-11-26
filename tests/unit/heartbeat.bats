@@ -46,27 +46,42 @@ payload() {
 }
 
 @test "reports the measured capacity and the peer pool derived from it" {
-  seed_capacity 200000 120000
+  seed_capacity 800000 800000
   run "${LIBEXEC}/heartbeat.sh"
   [ "${status}" -eq 0 ]
   [ "$(payload .capacity.source)" = "measured" ]
-  [ "$(payload .capacity.measured_down_kbit)" = "200000" ]
-  [ "$(payload .capacity.measured_up_kbit)" = "120000" ]
+  [ "$(payload .capacity.measured_down_kbit)" = "800000" ]
+  [ "$(payload .capacity.measured_up_kbit)" = "800000" ]
   [ "$(payload .capacity.measured_at)" = "2026-10-01T03:00:00Z" ]
   [ "$(payload .capacity.last_attempt)" = "ok" ]
-  [ "$(payload .capacity.aggregate_kbit)" = "30000" ]
+  [ "$(payload .capacity.contract_floor_kbit)" = "50000" ]
+  [ "$(payload .capacity.aggregate_kbit)" = "200000" ]
   [ "$(payload .capacity.peer_ceiling_kbit)" = "10000" ]
-  [ "$(payload .capacity.peer_guarantee_kbit)" = "5000" ]
-  [ "$(payload .capacity.peer_slots)" = "6" ]
+  [ "$(payload .capacity.peer_guarantee_kbit)" = "10000" ]
+  [ "$(payload .capacity.peer_slots)" = "20" ]
 }
 
-@test "reports the supported-environment floor when nothing was measured" {
+# A link below the contract is shaped to the floor and reported as such, so the
+# fleet sees an exit that serves its five clients on too small a link.
+@test "reports a measurement that the contract floor raised" {
+  seed_capacity 200000 120000
+  run "${LIBEXEC}/heartbeat.sh"
+  [ "${status}" -eq 0 ]
+  [ "$(payload .capacity.source)" = "floor" ]
+  [ "$(payload .capacity.measured_down_kbit)" = "200000" ]
+  [ "$(payload .capacity.contract_floor_kbit)" = "50000" ]
+  [ "$(payload .capacity.aggregate_kbit)" = "50000" ]
+  [ "$(payload .capacity.peer_slots)" = "5" ]
+}
+
+@test "reports the contract floor when nothing was measured" {
   run "${LIBEXEC}/heartbeat.sh"
   [ "${status}" -eq 0 ]
   [ "$(payload .capacity.source)" = "fallback" ]
   [ "$(payload .capacity.measured_down_kbit)" = "null" ]
-  [ "$(payload .capacity.aggregate_kbit)" = "7500" ]
-  [ "$(payload .capacity.peer_slots)" = "1" ]
+  [ "$(payload .capacity.contract_floor_kbit)" = "50000" ]
+  [ "$(payload .capacity.aggregate_kbit)" = "50000" ]
+  [ "$(payload .capacity.peer_slots)" = "5" ]
 }
 
 @test "reports the NAT classification from a completed network probe" {
