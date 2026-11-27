@@ -39,6 +39,7 @@ session_ip_forwarding:
   target_allow_list:
     - "172.30.0.1:8000"    # gnosis_vpn-server API
     - "172.30.0.1:51820"   # WireGuard (wggvpn)
+    - "api.curvy.box:443"  # Curvy relayer, reached by clients through a free side-car session
   # First match wins; only the WG data session pays, control/health stay free.
   session_admission_rules:
     - target: "udp:172.30.0.1:51820"
