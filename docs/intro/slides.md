@@ -253,15 +253,17 @@ the VPN server on every provisioned boot and caches the sample in
 
 | Knob               | Formula                         | 200 Mbit/s link |
 | ------------------ | ------------------------------- | --------------- |
-| aggregate          | ⌊min(down, up) / 4⌋             | 50 Mbit/s       |
-| peer slots         | ⌊aggregate / 5 Mbit/s⌋, ≥ 1     | 10 clients      |
+| contract floor     | 5 slots × 10 Mbit/s             | 50 Mbit/s       |
+| aggregate          | max(floor, ⌊min(down, up) / 4⌋) | 50 Mbit/s       |
+| peer slots         | max(5, ⌊aggregate / 10 Mbit/s⌋) | 5 clients       |
 | per-peer ceiling   | min(10 Mbit/s, aggregate)       | 10 Mbit/s       |
-| per-peer guarantee | min(ceiling, aggregate / slots) | 5 Mbit/s        |
+| per-peer guarantee | min(ceiling, aggregate / slots) | 10 Mbit/s       |
 
 - HTB + fq_codel: download on `wggvpn` egress, upload via `ifb-gvpn`. `lan0`
   itself is unshaped.
 - Best effort: a failed probe, or one below 1 Mbit/s, keeps the last sample; no
-  sample → assume the 30 Mbit/s floor.
+  sample → assume the contract floor. A link that measures below the floor is
+  raised to it, so the exit keeps its five clients.
 - A pin in `/etc/gvpn-exit/exit.env` always wins over the measurement.
 - Changing pool or rates needs a server restart, which **drops every client**.
 

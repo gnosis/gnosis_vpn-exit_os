@@ -3,7 +3,8 @@ Description=Measure the uplink and derive the VPN capacity
 # The measured link sizes the peer pool and the shaping tree, so it has to be
 # known before the server renders its client range and wg-quick installs the
 # classes. The server only Wants= this unit: a failed or skipped probe falls
-# back to the supported-environment floor instead of keeping the VPN down.
+# back to the contract floor (GVPN_PEER_MIN_SLOTS clients of
+# GVPN_PEER_MIN_SHARE_KBIT) instead of keeping the VPN down.
 ConditionPathExists=/var/lib/gvpn-exit/identity/provisioned
 Wants=network-online.target
 After=network-online.target

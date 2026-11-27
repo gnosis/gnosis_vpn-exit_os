@@ -40,6 +40,15 @@ CFG="${SHARE}/hoprd.cfg.yaml"
   grep -q '^  network:$' "${CFG}"
 }
 
+@test "PIX serves 100 MB free before the deposit confirms" {
+  # hoprd serves up to 1452 bytes of session data per packet.
+  local packets
+  packets="$(awk '$1 == "max_predeposit_packets:" {print $2}' "${CFG}")"
+  [ -n "${packets}" ]
+  (( packets * 1452 >= 100000000 ))
+  (( (packets - 1) * 1452 < 100000000 ))
+}
+
 @test "v5 configuration no longer carries the v4-only channel knobs" {
   ! grep -q 'min_safe_capacity_required' "${CFG}"
   ! grep -q 'stop_when_unfunded' "${CFG}"

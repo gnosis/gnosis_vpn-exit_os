@@ -83,8 +83,9 @@ transfers() {
 @test "reports the capacity the fresh sample yields" {
   run bash "${SCRIPT}"
   [ "${status}" -eq 0 ]
-  # 200/120 Mbit/s -> the smaller direction over four -> 30 Mbit/s, six slots.
-  [[ "${output}" == *"peer aggregate 30000kbit, 6 slot(s)"* ]]
+  # 200/120 Mbit/s -> the smaller direction over four is 30 Mbit/s, below the
+  # 50 Mbit/s contract floor, so the device serves five clients of 10 Mbit/s.
+  [[ "${output}" == *"peer aggregate 50000kbit, 5 slot(s), raised to the 50000kbit contract floor"* ]]
 }
 
 @test "names the endpoint, its data centre and the edge's minimum RTT" {

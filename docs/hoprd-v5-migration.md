@@ -1,6 +1,6 @@
 # Migrate a device from hoprd v4 to v5
 
-The image runs hoprd 5.0.6 on every device. A device that was provisioned on
+The image runs hoprd 5.0.7 on every device. A device that was provisioned on
 hoprd v4 keeps its old database and its sealed identity, so it still boots after
 the update, but its v4 channels and its old Safe need one manual cleanup before
 v5 uses the new Safe.

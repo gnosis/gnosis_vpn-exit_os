@@ -22,9 +22,11 @@ ISO build removes it again ([disk images](build.md#disk-images)).
   sync over UDP 123 with NTS-KE over TCP 4460 to the servers in
   `/etc/chrony.conf`, outbound SSH to the support bastion when the device has
   one, and HOPR p2p connectivity.
-- At least 30 Mbit/s in each direction. The device measures the link at boot and
-  sizes the VPN capacity from it. Below that floor it still uses the measured
-  share, which admits one client (see
+- At least 30 Mbit/s in each direction, ideally 200 Mbit/s, which carries the
+  contract of five clients with 10 Mbit/s each. The device measures the link at
+  boot and sizes the VPN capacity from it; a slower link still admits the
+  contract's five clients, at the cost of its quarter share, and the diagnostic
+  says the exit is out of contract (see
   [Traffic shaping](#traffic-shaping-and-blocklist)).
 - Not supported: Wi-Fi, static-only LANs, captive portals, IPv6-only uplinks, a
   LAN that uses `172.30.0.1` or overlaps `10.128.0.0/24` (they collide with the
@@ -70,10 +72,12 @@ Operator on the LAN (RFC1918 source) -------------------> device sshd -> gvpn (s
   needs no LAN route.
 - `hoprd.cfg.yaml` (v5) lets sessions reach only those two targets, enables the
   PIX/Curvy payment strategy and reads its proving artifacts from
-  `/usr/share/gvpn-exit/curvy-zk`. `hoprd-run.sh` renders a per-start copy into
-  `/run/hoprd/` with the provisioned Blokli URL in both the top-level and
-  PIX-pool fields, so a template change in an update reaches every device.
-  hoprd's API listens on `127.0.0.1:3001`; p2p uses port 9091.
+  `/usr/share/gvpn-exit/curvy-zk`. A paying session gets 100 MB of free service
+  before its deposit confirms (`max_predeposit_packets`), on start and again
+  after each paid cycle hands over to an unfunded one. `hoprd-run.sh` renders a
+  per-start copy into `/run/hoprd/` with the provisioned Blokli URL in both the
+  top-level and PIX-pool fields, so a template change in an update reaches every
+  device. hoprd's API listens on `127.0.0.1:3001`; p2p uses port 9091.
 - gnosis_vpn-server brings `wggvpn` up through wg-quick, whose hooks
   (`wg-hooks.sh`) install forwarding, NAT and shaping. The unit's `ExecStopPost`
   runs `wg-quick down` after a crash.
@@ -358,15 +362,27 @@ lookup already does. A measured sample is cached in `state/capacity.env`.
 `lib.sh` turns it into the shaping knobs after the device overrides, so a pin in
 `/etc/gvpn-exit/exit.env` always wins:
 
-- **aggregate** = floor(min(measured download, measured upload) / 4). The exit's
-  VPN traffic gets a quarter of the public link; hoprd, netdata, image updates
-  and the operator keep the rest. 200 Mbit/s → 50 Mbit/s.
-- **peer slots** = floor(aggregate / 5 Mbit/s), at least one and at most the
-  last usable address of the `/24`. One WireGuard pool address and one shaping
-  class per slot. 50 Mbit/s → ten clients.
-- **per-peer ceiling** = min(10 Mbit/s, aggregate): what one client may use.
+- **contract floor** = `GVPN_PEER_MIN_SLOTS` × `GVPN_PEER_MIN_SHARE_KBIT`, five
+  clients with 10 Mbit/s each by default, so 50 Mbit/s of VPN traffic. It is the
+  least the device shapes to: an exit with a 30 Mbit/s link still serves five
+  clients, it does not shrink to one.
+- **aggregate** = max(floor, floor(min(measured download, measured upload) /
+  4)). The exit's VPN traffic gets a quarter of the public link; hoprd, netdata,
+  image updates and the operator keep the rest. 200 Mbit/s → 50 Mbit/s, and a
+  slower link is raised to the floor, so it costs the exit its quarter share
+  rather than its clients.
+- **peer slots** = floor(aggregate / `GVPN_PEER_MIN_SHARE_KBIT`), at least
+  `GVPN_PEER_MIN_SLOTS` and at most the last usable address of the `/24`. One
+  WireGuard pool address and one shaping class per slot. 50 Mbit/s → five
+  clients of 10 Mbit/s.
+- **per-peer ceiling** = min(`GVPN_PEER_RATE_KBIT`, aggregate): what one client
+  may use.
 - **per-peer guarantee** = min(ceiling, aggregate / slots): that client's HTB
   share, so the guarantees never over-subscribe the aggregate.
+
+A pin sets the band, not the client count: a pinned aggregate replaces the
+measurement, while the pool still holds the floor's slots and the guarantee
+follows from the pinned aggregate.
 
 The pool is a limit on registered clients, not on people: a client keeps its
 slot until `gnosisvpn-server` cleans the registration up, and a peer that never
@@ -387,16 +403,18 @@ request. `speed.cloudflare.com` publishes no limits and has answered a single
 boot's probe with 429 and a wait of about an hour, so the probe does not retry
 within the boot. A rate below `GVPN_CAPACITY_MIN_KBIT` (1 Mbit/s) in either
 direction is implausible too: the probe completed on a link throttled to a
-trickle. With no sample at all the device assumes the supported-environment
-floor: 30 Mbit/s → 7.5 Mbit/s aggregate and one slot. `GVPN_CAPACITY_STREAMS`,
-`GVPN_CAPACITY_WARMUP_S` and `GVPN_CAPACITY_WINDOW_S` tune the probe.
-`gvpn-exit-status` warns about a fallback or a failed or rate-limited probe, the
-heartbeat carries the sample and the derived values, and no outcome can fail a
-required greenboot check: a measured aggregate that cannot give every slot of a
-pinned pool 1 kbit/s falls back to the floor as well, so a sample never leaves
-shaping without its values. One probe per boot costs 11 s of line rate in each
-direction (about 140 MB each way at 100 Mbit/s); a pinned aggregate costs none,
-and a server restart reuses the cached sample instead of measuring again.
+trickle. With no sample at all the device assumes the contract floor: five
+clients with 10 Mbit/s each, so 50 Mbit/s of VPN traffic.
+`GVPN_CAPACITY_STREAMS`, `GVPN_CAPACITY_WARMUP_S` and `GVPN_CAPACITY_WINDOW_S`
+tune the probe. `gvpn-exit-status` warns about a fallback, a failed or
+rate-limited probe and a measurement below the floor (it prints a `contract`
+line for the last), the heartbeat carries the sample, the floor and the derived
+values, and no outcome can fail a required greenboot check: a measured aggregate
+that cannot give every slot of a pinned pool 1 kbit/s falls back to the floor as
+well, so a sample never leaves shaping without its values. One probe per boot
+costs 11 s of line rate in each direction (about 140 MB each way at 100 Mbit/s);
+a pinned aggregate costs none, and a server restart reuses the cached sample
+instead of measuring again.
 
 Defaults in `exit.env`:
 
