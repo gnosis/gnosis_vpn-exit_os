@@ -54,6 +54,9 @@ the VM harness needs x86_64 Linux with KVM (`cpu.bats` skips on Darwin because
   the newest digest or immutable tag their tags offer, then check them; the
   hoprd image digest moves with its two binary hashes by hand. The diff goes in
   by PR.
+- `just bump-hoprd <version>` - move the hoprd pin (version, image digest and
+  both binary hashes) to a release; the Bump hoprd workflow runs it and opens
+  the PR, on dispatch from hoprnet/hoprd's release or by hand.
 - `just build` - build the image and rechunk it into layers split by package,
   keeping the layer plan of `<GVPN_IMAGE_REPO>:canary` (`GVPN_PREVIOUS_BUILD`
   names another image, empty none), into `output/image` and the builder as

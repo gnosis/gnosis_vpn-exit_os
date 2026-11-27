@@ -19,7 +19,7 @@ SKOPEO="${SKOPEO:-skopeo}"
 # `latest`) are not pinned and need no check.
 PINS=(
   "image/versions.env|FEDORA_IOT_IMAGE|bump it to the current digest of quay.io/fedora/fedora-iot:44: just update-pins"
-  "image/versions.env|HOPRD_IMAGE|bump the tag, image digest and both binary hashes together by hand"
+  "image/versions.env|HOPRD_IMAGE|bump the tag, image digest and both binary hashes together: just bump-hoprd VERSION"
   "tools/build-disk.sh|BIB_IMAGE|bump it to the current digest of quay.io/centos-bootc/bootc-image-builder:latest: just update-pins"
   "tools/builder.sh|PODMAN_IMAGE|bump it to the newest vX.Y.Z-immutable tag and its digest: just update-pins"
 )

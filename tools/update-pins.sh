@@ -9,7 +9,7 @@
 #                     the Fedora major version only moves by editing the tag
 #   HOPRD_IMAGE is checked by check-pins.sh but not moved here: its binary
 #   sha256 pins (HOPRD_SHA256, HOPRD_CFG_SHA256) must move in the same commit,
-#   so bump the tag, digest and both hashes together by hand.
+#   so bump the tag, digest and both hashes together: just bump-hoprd VERSION.
 #   BIB_IMAGE         the digest behind bootc-image-builder:latest
 #   PODMAN_IMAGE      the newest vX.Y.Z-immutable tag of quay.io/podman/stable
 #                     and the digest behind it
