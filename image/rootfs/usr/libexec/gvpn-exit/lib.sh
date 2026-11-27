@@ -212,7 +212,7 @@ kbit_ok() {
 # GVPN_CAPACITY_MIN_KBIT. A probe can complete on a link that is throttled to a
 # trickle, and a sample like that is treated as no measurement. A minimum that
 # is not a rate refuses every sample, so a typo costs the measurement and the
-# device runs on the supported-environment floor.
+# device runs on the contract floor.
 capacity_sample_ok() {
   kbit_ok "$1" && kbit_ok "$2" && kbit_ok "${GVPN_CAPACITY_MIN_KBIT:-}" \
     && (( $1 >= GVPN_CAPACITY_MIN_KBIT && $2 >= GVPN_CAPACITY_MIN_KBIT ))
@@ -302,22 +302,34 @@ load_capacity_cache() {
 
 # Derive the shaping aggregate and the peer pool from the measurement cache and
 # the knobs that apply after the device overrides:
-#   aggregate = floor(min(measured down, measured up) / GVPN_UPLINK_SHARE_DIVISOR)
-#   slots     = floor(aggregate / GVPN_PEER_MIN_SHARE_KBIT), 1..last usable octet
+#   floor     = GVPN_PEER_MIN_SLOTS * GVPN_PEER_MIN_SHARE_KBIT
+#   aggregate = max(floor, floor(min(measured down, measured up) / GVPN_UPLINK_SHARE_DIVISOR))
+#   slots     = floor(aggregate / GVPN_PEER_MIN_SHARE_KBIT), floor..last usable octet
 #   ceiling   = min(GVPN_PEER_RATE_KBIT, aggregate)
 #   guarantee = min(ceiling, floor(aggregate / slots))
+# The floor is the contract: GVPN_PEER_MIN_SLOTS clients, each admitted with
+# GVPN_PEER_MIN_SHARE_KBIT. A measurement that would derive less is raised to
+# it (source `floor`), and a device without a usable sample assumes exactly it
+# (source `fallback`). A pinned aggregate replaces the measurement, but the
+# pool still holds the floor's slots: a pin sets the band, not the client count.
 # The `auto` knobs resolve here; a number in /etc/gvpn-exit/exit.env pins the
-# value. Without a usable measurement the aggregate falls back to the
-# supported-environment floor, and so does a measured aggregate that cannot
-# give every slot of a pinned pool a 1 kbit/s share: a sample is not a pin, so
-# it never leaves the derived values empty. Invalid knobs are left as they are,
-# so the unit that consumes them (render-wg-conf.sh, tc) fails loudly instead of silently
-# shaping to a different number.
+# value. Invalid knobs are left as they are, so the unit that consumes them
+# (render-wg-conf.sh, tc) fails loudly instead of silently shaping to a
+# different number.
 resolve_capacity() {
   local aggregate="${GVPN_PEER_SHAPING_AGGREGATE_KBIT}"
   local divisor="${GVPN_UPLINK_SHARE_DIVISOR}" share="${GVPN_PEER_MIN_SHARE_KBIT}"
+  local min_slots="${GVPN_PEER_MIN_SLOTS}" floor_kbit=""
   local slots limit count ceiling guarantee measured_min
+  # The contract floor. An unusable knob leaves it empty, and leaves the derived
+  # aggregate unresolved with it rather than shaping to a number nobody asked
+  # for.
+  if [[ "${min_slots}" =~ ^[1-9][0-9]{0,2}$ ]] && kbit_ok "${share}"; then
+    floor_kbit=$(( min_slots * share ))
+  fi
   # shellcheck disable=SC2034 # read by the scripts that source this file
+  GVPN_CAPACITY_FLOOR_KBIT="${floor_kbit}"
+  # shellcheck disable=SC2034
   GVPN_PEER_CEIL_KBIT=""
   # shellcheck disable=SC2034
   GVPN_PEER_GUARANTEE_KBIT=""
@@ -341,9 +353,19 @@ resolve_capacity() {
           && (( aggregate < GVPN_PEER_MAX_OCTET - GVPN_PEER_MIN_OCTET + 1 )); then
         aggregate=auto
       fi
+      # A sample that would admit fewer or slower clients than the contract is
+      # raised to the floor: the device serves its minimum, it does not shrink
+      # with the link.
+      if kbit_ok "${aggregate}" && kbit_ok "${floor_kbit}" && (( aggregate < floor_kbit )); then
+        aggregate="${floor_kbit}"
+        # shellcheck disable=SC2034
+        GVPN_CAPACITY_SOURCE=floor
+      fi
     fi
     if ! kbit_ok "${aggregate}"; then
-      aggregate="${GVPN_PEER_CAPACITY_FALLBACK_KBIT}"
+      # No usable sample, or a pinned pool the sample cannot serve: the device
+      # assumes the contract floor instead of the fastest link it ever saw.
+      aggregate="${floor_kbit:-auto}"
       # shellcheck disable=SC2034
       GVPN_CAPACITY_SOURCE=fallback
     fi
@@ -359,9 +381,14 @@ resolve_capacity() {
     if peer_min_octet_ok "${GVPN_PEER_MIN_OCTET}" && kbit_ok "${aggregate}" && kbit_ok "${share}"; then
       slots=$(( aggregate / share ))
       if (( slots < 1 )); then
-        # Below the supported floor: serve one client best effort rather than
-        # refuse service, and let gvpn-exit-status report the degradation.
+        # Below the contract's per-client rate: serve one client best effort
+        # rather than refuse service, and let gvpn-exit-status report it.
         slots=1
+      fi
+      # The contract admits its clients whatever pins the band: a pinned
+      # aggregate under the floor still gets the floor's slots.
+      if [[ "${min_slots}" =~ ^[1-9][0-9]{0,2}$ ]] && (( slots < min_slots )); then
+        slots="${min_slots}"
       fi
       limit=$(( 255 - GVPN_PEER_MIN_OCTET ))
       if (( slots > limit )); then

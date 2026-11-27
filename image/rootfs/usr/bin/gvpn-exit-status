@@ -309,23 +309,31 @@ wireguard() {
 }
 
 # The uplink measurement (capacity.sh) and the shaping knobs lib.sh derives
-# from it. A device without a usable sample runs on the supported-environment
-# floor, which is worth a warning: it serves one client slot.
+# from it. The contract floor -- GVPN_PEER_MIN_SLOTS clients with
+# GVPN_PEER_MIN_SHARE_KBIT each -- is the least the device shapes to: a
+# measurement below it, or no sample at all, leaves the device out of contract
+# and is worth a warning.
 capacity() {
   section "Capacity"
   provisioned_or_skip || return 0
-  local source
+  local source probe floor="none (check GVPN_PEER_MIN_SLOTS, GVPN_PEER_MIN_SHARE_KBIT)"
+  [[ -z "${GVPN_CAPACITY_FLOOR_KBIT}" ]] || floor="${GVPN_CAPACITY_FLOOR_KBIT} kbit/s"
   case "${GVPN_CAPACITY_SOURCE}" in
     measured) source="measured ${GVPN_CAPACITY_MEASURED_AT}" ;;
+    floor) source="measured ${GVPN_CAPACITY_MEASURED_AT}, below the contract floor" ;;
     pinned) source="pinned in ${GVPN_EXIT_OVERRIDES}" ;;
-    *) source="none (supported-environment floor)" ;;
+    *) source="none (contract floor)" ;;
   esac
+  # The probe outcome is the same whether or not the floor raised the sample.
+  probe="${GVPN_CAPACITY_SOURCE}"
+  [[ "${probe}" != floor ]] || probe=measured
   field "aggregate" "${GVPN_PEER_SHAPING_AGGREGATE_KBIT} kbit/s"
+  field "contract floor" "${floor}"
   field "peer ceiling" "${GVPN_PEER_CEIL_KBIT} kbit/s"
   field "peer guarantee" "${GVPN_PEER_GUARANTEE_KBIT} kbit/s"
   field "peer slots" "${GVPN_PEER_COUNT} (${GVPN_PEER_SUBNET_PREFIX}.${GVPN_PEER_MIN_OCTET}-${GVPN_PEER_SUBNET_PREFIX}.${GVPN_PEER_MAX_OCTET})"
   field "sample" "${source}"
-  case "${GVPN_CAPACITY_SOURCE}:${GVPN_CAPACITY_ATTEMPT}" in
+  case "${probe}:${GVPN_CAPACITY_ATTEMPT}" in
     pinned:*)
       report "uplink" ok "pinned, the measurement is not used" ;;
     measured:ok)
@@ -343,10 +351,14 @@ capacity() {
         "probe rate limited by the endpoint at ${GVPN_CAPACITY_ATTEMPT_AT}, using the sample from ${GVPN_CAPACITY_MEASURED_AT}" ;;
     *:rate-limited)
       report "uplink" "$(severity_for capacity)" \
-        "probe rate limited by the endpoint at ${GVPN_CAPACITY_ATTEMPT_AT}, no sample, assuming the supported-environment floor" ;;
+        "probe rate limited by the endpoint at ${GVPN_CAPACITY_ATTEMPT_AT}, no sample, assuming the ${GVPN_CAPACITY_FLOOR_KBIT} kbit/s contract floor" ;;
     *)
-      report "uplink" "$(severity_for capacity)" "no sample, assuming the supported-environment floor" ;;
+      report "uplink" "$(severity_for capacity)" "no sample, assuming the ${GVPN_CAPACITY_FLOOR_KBIT} kbit/s contract floor" ;;
   esac
+  if [[ "${GVPN_CAPACITY_SOURCE}" == floor ]]; then
+    report "contract" "$(severity_for capacity)" \
+      "down ${GVPN_CAPACITY_DOWN_KBIT}, up ${GVPN_CAPACITY_UP_KBIT} kbit/s, shaped to the ${GVPN_CAPACITY_FLOOR_KBIT} kbit/s floor"
+  fi
 }
 
 # Wired NICs, as `10-gvpn-exit-lan0.link` sees them. systemd decides `Type=ether`

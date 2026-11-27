@@ -4,9 +4,9 @@
 # Measures the uplink against Cloudflare's speed test endpoints
 # (GVPN_CAPACITY_URL) and caches the sample in state/capacity.env. lib.sh turns
 # that sample into the shaping aggregate and the peer pool (see exit.env): the
-# exit's VPN traffic gets one GVPN_UPLINK_SHARE_DIVISOR of the measured link,
-# and every concurrent client is admitted against GVPN_PEER_MIN_SHARE_KBIT of
-# that share.
+# exit's VPN traffic gets one GVPN_UPLINK_SHARE_DIVISOR of the measured link, and
+# the device never derives fewer than GVPN_PEER_MIN_SLOTS clients admitted with
+# GVPN_PEER_MIN_SHARE_KBIT each.
 #
 # The method matters: a probe that opens a few short-lived connections never
 # leaves TCP slow start at a high RTT and under-reports a healthy line: the
@@ -30,8 +30,8 @@
 #   attempt as rate-limited, with the Retry-After wait in the log. Retrying in
 #   this boot would not help: the wait is about an hour, and a later sample
 #   would need a server restart that drops every client;
-# - no sample at all: lib.sh falls back to GVPN_PEER_CAPACITY_FALLBACK_KBIT,
-#   the supported-environment floor.
+# - no sample at all: lib.sh assumes the contract floor, GVPN_PEER_MIN_SLOTS
+#   clients with GVPN_PEER_MIN_SHARE_KBIT each.
 # Every outcome is recorded in the cache for gvpn-exit-status and the
 # heartbeat, and an expected failure still exits 0 so the unit does not gate
 # the server (gnosisvpn-server.service only Wants= this unit).
@@ -229,7 +229,7 @@ write_cache() {
 }
 
 main() {
-  local now down up sample server latency via rc=0 attempt=failed outcome=failed
+  local now down up sample server latency via rc=0 attempt=failed outcome=failed floor
   now="$(iso_now)"
   # The last good sample survives a failed probe.
   down="${GVPN_CAPACITY_DOWN_KBIT}"
@@ -258,7 +258,11 @@ main() {
     load_exit_env
     via="via ${server}"
     [[ "${latency}" == unknown ]] || via+=" (${latency} ms)"
-    log "uplink measured down=${down}kbit up=${up}kbit ${via}; peer aggregate ${GVPN_PEER_SHAPING_AGGREGATE_KBIT}kbit, ${GVPN_PEER_COUNT} slot(s)"
+    floor=""
+    if [[ "${GVPN_CAPACITY_SOURCE}" == floor ]]; then
+      floor=", raised to the ${GVPN_CAPACITY_FLOOR_KBIT}kbit contract floor"
+    fi
+    log "uplink measured down=${down}kbit up=${up}kbit ${via}; peer aggregate ${GVPN_PEER_SHAPING_AGGREGATE_KBIT}kbit, ${GVPN_PEER_COUNT} slot(s)${floor}"
     return 0
   fi
 
@@ -270,7 +274,7 @@ main() {
   if [[ -n "${GVPN_CAPACITY_MEASURED_AT}" ]]; then
     log "capacity probe ${outcome}; keeping the sample from ${GVPN_CAPACITY_MEASURED_AT}"
   else
-    log "capacity probe ${outcome}; no sample yet, the supported-environment fallback applies"
+    log "capacity probe ${outcome}; no sample yet, the device assumes the ${GVPN_CAPACITY_FLOOR_KBIT}kbit contract floor"
   fi
 }
 

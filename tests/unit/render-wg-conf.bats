@@ -64,17 +64,19 @@ teardown() {
 }
 
 @test "the client pool follows the measured capacity" {
-  seed_capacity 200000 200000
+  seed_capacity 800000 800000
   run "${LIBEXEC}/render-wg-conf.sh"
   [ "${status}" -eq 0 ]
-  grep -qx 'allowed_client_ips = { start = "10.128.0.2", end = "10.128.0.11" }' \
+  # 800 Mbit/s over four is 200 Mbit/s of VPN traffic: twenty 10 Mbit/s slots.
+  grep -qx 'allowed_client_ips = { start = "10.128.0.2", end = "10.128.0.21" }' \
     "${GVPN_SERVER_RUN_DIR}/config.toml"
 }
 
-@test "the client pool falls back to one slot without a measurement" {
+# The contract: five clients with 10 Mbit/s each, also without a measurement.
+@test "the client pool falls back to the contract floor without a measurement" {
   run "${LIBEXEC}/render-wg-conf.sh"
   [ "${status}" -eq 0 ]
-  grep -qx 'allowed_client_ips = { start = "10.128.0.2", end = "10.128.0.2" }' \
+  grep -qx 'allowed_client_ips = { start = "10.128.0.2", end = "10.128.0.6" }' \
     "${GVPN_SERVER_RUN_DIR}/config.toml"
 }
 
